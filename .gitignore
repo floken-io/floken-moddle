@@ -4,3 +4,9 @@ dist/
 coverage/
 .changeset/*.md
 !.changeset/config.json
+# tsup 生成的临时配置打包产物（Windows 下每次 build 落一个，带随机后缀）
+tsup.config.bundled_*.mjs
+
+# 本仓 `packageManager` 是 pnpm；`package-lock.json` 只是本机临时用 npm 装的副产品。
+# 提交它就会与 pnpm 口径打架（两份锁 = 零份锁），故只在本机留着、不进版本库。
+package-lock.json

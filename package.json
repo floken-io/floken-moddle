@@ -1,32 +1,52 @@
 {
   "name": "floken-moddle",
   "version": "0.0.0",
-  "description": "BPMN 2.0 metamodel + Model JSON + JSON\u2194XML + validation for floken",
+  "description": "BPMN 2.0 metamodel + Model JSON + JSON↔XML + validation for floken",
   "type": "module",
   "sideEffects": false,
-  "engines": { "node": ">=22.12" },
+  "engines": {
+    "node": ">=22.12"
+  },
   "packageManager": "pnpm@12.6.0",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
   "types": "./dist/index.d.ts",
   "main": "./dist/index.js",
-  "files": ["dist", "README.md", "LICENSE", "CHANGELOG.md"],
-  "publishConfig": { "access": "public", "provenance": true },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
-    "verify": "node tooling/verify.mjs",
+    "gen:spec": "node scripts/gen-bpmn-spec.mjs",
+    "check:spec": "node scripts/gen-bpmn-spec.mjs --check",
+       "verify": "node tooling/verify.mjs",
+    "ac-s1": "node examples/gen-sample.mjs && node tooling/ac-s1.mjs",
+    "miwg": "node tooling/fetch-miwg.mjs && node tooling/miwg.mjs",
+    "interop": "node tooling/interop.mjs",
     "changeset": "changeset",
     "release": "pnpm build && pnpm verify && changeset publish",
     "prepublishOnly": "pnpm build && pnpm verify"
   },
   "devDependencies": {
+    "@changesets/cli": "3.0.3",
     "@types/node": "^22.20.4",
-    "typescript": "5.9.3",
     "tsup": "8.5.1",
-    "vitest": "5.0.2",
-    "@changesets/cli": "3.0.3"
+    "typescript": "5.9.3",
+    "vitest": "5.0.2"
   },
-  "license": "Apache-2.0"
+  "license": "Apache-2.0",
+  "dependencies": {
+    "zod": ">=4.6.5 <5.0.0"
+  }
 }

@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:floken="http://floken.dev/schema/approval/1.0" xmlns:camunda="http://camunda.org/schema/1.0/bpmn" id="Definitions_1" targetNamespace="http://floken.dev/schema/bpmn/1.0" name="报销流程" floken:schemaVersion="1.0.0" floken:version="3">
+  <bpmn:extensionElements>
+    <floken:meta>
+      <floken:owner>finance-team</floken:owner>
+    </floken:meta>
+  </bpmn:extensionElements>
+  <bpmn:process id="Process_1" name="主流程" isExecutable="true">
+    <bpmn:startEvent id="StartEvent_1" name="发起" />
+    <bpmn:userTask id="UserTask_1" name="部门经理审批" floken:formKey="expense-form" camunda:assignee="demo">
+      <bpmn:extensionElements>
+        <floken:approval>
+          <floken:approvers t="array">
+            <floken:approver>
+              <floken:type>user</floken:type>
+              <floken:value>u1</floken:value>
+            </floken:approver>
+            <floken:approver>
+              <floken:type>deptLeader</floken:type>
+              <floken:of>starter</floken:of>
+            </floken:approver>
+          </floken:approvers>
+          <floken:approverPolicy>all</floken:approverPolicy>
+          <floken:mode>vote</floken:mode>
+          <floken:vote>
+            <floken:threshold t="number">0.5</floken:threshold>
+          </floken:vote>
+          <floken:onReject>abort</floken:onReject>
+          <floken:reject>
+            <floken:allowed t="boolean">true</floken:allowed>
+            <floken:requireComment t="boolean">true</floken:requireComment>
+          </floken:reject>
+          <floken:timeout>
+            <floken:duration>P3D</floken:duration>
+            <floken:actions t="array">
+              <floken:action>
+                <floken:type>remind</floken:type>
+                <floken:interval>PT4H</floken:interval>
+              </floken:action>
+            </floken:actions>
+          </floken:timeout>
+          <floken:cc>
+            <floken:to t="array">
+              <floken:to>
+                <floken:type>role</floken:type>
+                <floken:value>finance</floken:value>
+              </floken:to>
+            </floken:to>
+            <floken:on t="array">
+              <floken:on>completed</floken:on>
+            </floken:on>
+          </floken:cc>
+        </floken:approval>
+      </bpmn:extensionElements>
+    </bpmn:userTask>
+    <bpmn:exclusiveGateway id="Gateway_1" name="金额判断" />
+    <bpmn:subProcess id="SubProcess_1" name="复核">
+      <bpmn:startEvent id="Inner_Start" />
+      <bpmn:userTask id="Inner_Task" name="复核" />
+      <bpmn:sequenceFlow id="Inner_Flow" sourceRef="Inner_Start" targetRef="Inner_Task" />
+    </bpmn:subProcess>
+    <bpmn:endEvent id="EndEvent_1" />
+    <bpmn:boundaryEvent id="Boundary_1" attachedToRef="UserTask_1">
+      <bpmn:timerEventDefinition>
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression" language="https://www.omg.org/spec/DMN/20230324/FEEL/">PT2H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="Flow_1" sourceRef="StartEvent_1" targetRef="UserTask_1" />
+    <bpmn:sequenceFlow id="Flow_2" sourceRef="UserTask_1" targetRef="Gateway_1">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression" language="https://www.omg.org/spec/DMN/20230324/FEEL/">amount &gt; 5000</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_3" sourceRef="Gateway_1" targetRef="SubProcess_1" name="大于五千" />
+    <bpmn:sequenceFlow id="Flow_4" sourceRef="SubProcess_1" targetRef="EndEvent_1" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="Definitions_1_diagram">
+    <bpmndi:BPMNPlane id="Process_1_plane" bpmnElement="Process_1">
+      <bpmndi:BPMNShape id="Boundary_1_di" bpmnElement="Boundary_1">
+        <dc:Bounds x="298" y="222" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_1_di" bpmnElement="EndEvent_1">
+        <dc:Bounds x="1006" y="182" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_1_di" bpmnElement="Gateway_1">
+        <dc:Bounds x="446" y="175" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Inner_Start_di" bpmnElement="Inner_Start">
+        <dc:Bounds x="606" y="152" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Inner_Task_di" bpmnElement="Inner_Task">
+        <dc:Bounds x="722" y="130" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="StartEvent_1_di" bpmnElement="StartEvent_1">
+        <dc:Bounds x="150" y="182" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SubProcess_1_di" bpmnElement="SubProcess_1" isExpanded="true">
+        <dc:Bounds x="576" y="100" width="350" height="200" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="UserTask_1_di" bpmnElement="UserTask_1">
+        <dc:Bounds x="266" y="160" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="Flow_1_di" bpmnElement="Flow_1">
+        <di:waypoint x="186" y="200" />
+        <di:waypoint x="266" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_2_di" bpmnElement="Flow_2">
+        <di:waypoint x="366" y="200" />
+        <di:waypoint x="446" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_3_di" bpmnElement="Flow_3">
+        <di:waypoint x="496" y="200" />
+        <di:waypoint x="576" y="200" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="536" y="190" width="60" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_4_di" bpmnElement="Flow_4">
+        <di:waypoint x="926" y="200" />
+        <di:waypoint x="1006" y="200" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Inner_Flow_di" bpmnElement="Inner_Flow">
+        <di:waypoint x="642" y="170" />
+        <di:waypoint x="722" y="170" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
