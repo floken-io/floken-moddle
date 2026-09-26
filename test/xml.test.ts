@@ -394,8 +394,13 @@ describe('覆盖表外的元素（FR-S8 / AC-S6）', () => {
       '</bpmn:definitions>',
     ].join('\n');
     const def = fromXmlSync(xml);
-    const kept = def.processes[0]?.extension?.['_extensionElements'] as string[] | undefined;
-    expect(kept?.some((s) => s.includes('bpmn:monitoring'))).toBe(true);
+    /*
+     * ★ BPMN 命名空间的元素进 `_bpmnChildren`（**不是** `_extensionElements`）：
+     * XSD 里 `extensionElements` 的内容是 `<xsd:any namespace="##other"/>`，
+     * 规范元素塞进去产出的是非法 XML（见 `check:xsd` 门禁抓到的 83 条违规）。
+     */
+    const kept = def.processes[0]?.extension?.['_bpmnChildren'] as string[] | undefined;
+    expect(kept?.some((s) => s.includes('monitoring'))).toBe(true);
     // 保全了就得导得回去（往返不丢，纪律一）
     expect(toXmlSync(def, { autoLayout: false })).toContain('bpmn:monitoring');
   });

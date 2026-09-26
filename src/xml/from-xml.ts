@@ -111,6 +111,10 @@ const SPEC_ATTR_KEYS: readonly string[] = Object.freeze([
   // 第二批（执行语义关键，见 definition.ts 的说明）
   'eventGatewayType',
   'itemSubjectRef',
+  // 第三批：`association` 的端点（XSD 里是 required，不读回来就只是"保全不能建模"）
+  'sourceRef',
+  'targetRef',
+  'associationDirection',
 ]);
 
 /** 组 A 里的**布尔型**规范属性（XSD `xsd:boolean`） */
@@ -783,8 +787,13 @@ function unsupported(el: XmlElement, ctx: Ctx, path: string): void {
 /**
  * 覆盖表外的 BPMN 元素 → **原样快照保全**（§4.5 纪律一：认不出的东西一律保全）。
  *
- * 与「第三方元素」走同一个袋子 `extension._extensionElements` —— 都是"我们不建模、
- * 但必须还给用户"的东西，没必要开两套机制。
+ * ★ 但**分两个袋子**，判据是命名空间（不是"认不认识"）：
+ *
+ * - **BPMN 命名空间**的规范元素 → `_bpmnChildren`：导出时**原地**写成父元素的直接子元素。
+ *   不能进 `<bpmn:extensionElements>` —— XSD 里它的内容是 `<xsd:any namespace="##other"/>`，
+ *   规范元素放进去产出的是**非法** XML（`ioSpecification` / `multiInstanceLoopCharacteristics`
+ *   / `potentialOwner` … 曾因此让 19 份语料的往返产物被官方 XSD 拒收）。
+ * - **其它命名空间**（`camunda:*` 之类）→ `_extensionElements`：这才是 `extensionElements` 的地盘。
  */
 function preserveElement(
   el: XmlElement,
@@ -797,16 +806,17 @@ function preserveElement(
     return;
   }
   const bag = (into.extension ??= {});
-  const prev = bag['_extensionElements'];
+  const key = el.ns === BPMN_NS ? '_bpmnChildren' : '_extensionElements';
+  const prev = bag[key];
   const arr: string[] = Array.isArray(prev) ? (prev as string[]).slice() : [];
   arr.push(snapshot(el));
-  bag['_extensionElements'] = arr;
+  bag[key] = arr;
   if (ctx.onUnsupported === 'warn') {
     ctx.warn(
       diagnostic(
         'warn',
         MODDLE_DIAGNOSTIC_CODES.VALIDATE_ELEMENT_PRESERVED,
-        `元素 '${el.name}' 不在覆盖表内，已原样保全进 extension._extensionElements（往返不丢）`,
+        `元素 '${el.name}' 不在覆盖表内，已原样保全（往返不丢）`,
         { start: el.start, end: el.end, node: { path } },
       ),
     );
@@ -944,11 +954,13 @@ function laneFromXml(el: XmlElement): Lane {
       if (bag) out.extension = bag;
       continue;
     }
+    // ★ 与 `preserveElement` 同一条判据：BPMN 命名空间的元素不能进 `extensionElements`
     const bag = (out.extension ??= {});
-    const prev = bag['_extensionElements'];
+    const key = child.ns === BPMN_NS ? '_bpmnChildren' : '_extensionElements';
+    const prev = bag[key];
     const arr: string[] = Array.isArray(prev) ? (prev as string[]).slice() : [];
     arr.push(snapshot(child));
-    bag['_extensionElements'] = arr;
+    bag[key] = arr;
   }
   const bag: ExtensionBag = {};
   for (const a of el.attrs) {

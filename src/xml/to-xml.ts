@@ -178,10 +178,30 @@ export function toXmlSync(def: ProcessDefinition, opts: ToXmlOptions = {}): stri
   if (def.version !== undefined) defAttrs[`${FLOKEN_PREFIX}:version`] = def.version;
 
   const kids: XmlChild[] = [];
-  const defExt = definitionsExtensionToXml(def, includeExt);
-  if (defExt) kids.push(defExt);
+  /*
+   * ★ `<definitions>` 的直接子元素**必须按 XSD 的 sequence 排**：
+   *   `import*` → `extension*` → `rootElement*` → `BPMNDiagram*` → `relationship*`
+   * （BPMN20.xsd 的 `tDefinitions`）。
+   *
+   * 曾经把 `extraElements` 一律追加到最后 —— MIWG 的 `<bpmn:import>` 因此落到了
+   * `BPMNDiagram` 之后，官方 XSD 直接拒收（6 条违规）。→ 按标签分三段放。
+   */
+  const extras = (Array.isArray(def.extraElements) ? def.extraElements : []).filter(
+    (s): s is string => typeof s === 'string' && s.length > 0,
+  );
+  const isTag = (s: string, local: string): boolean => snapshotLocalName(s) === local;
+  const firsts = extras.filter((s) => isTag(s, 'import')).map((s) => new RawXml(s));
+  const lasts = extras.filter((s) => isTag(s, 'relationship')).map((s) => new RawXml(s));
+  const rest = extras
+    .filter((s) => !isTag(s, 'import') && !isTag(s, 'relationship'))
+    .map((s) => new RawXml(s));
+
+  kids.push(...firsts);
+  // `tBaseElement` 的 sequence：`documentation*` → `extensionElements?`（文档必须在扩展之前）
   if (def.description !== undefined) kids.push(el(`${P}:documentation`, {}, [def.description]));
   for (const d of def.extraDocumentations ?? []) kids.push(el(`${P}:documentation`, {}, [d]));
+  const defExt = definitionsExtensionToXml(def, includeExt);
+  if (defExt) kids.push(defExt);
 
   /*
    * ★ `collaboration` 与 `process` 都是 `rootElement`（XSD 里是同一层的 choice），
@@ -194,11 +214,10 @@ export function toXmlSync(def: ProcessDefinition, opts: ToXmlOptions = {}): stri
   // `collaboration` 是 0..n（XSD maxOccurs=unbounded），全部写出
   for (const collab of def.collaborations ?? []) kids.push(collaborationToXml(collab, ctx));
   for (const proc of def.processes) kids.push(processToXml(proc, ctx));
-  if (Array.isArray(def.extraElements)) {
-    for (const s of def.extraElements) if (typeof s === 'string' && s) kids.push(new RawXml(s));
-  }
+  kids.push(...rest);
   const layout = opts.autoLayout === false ? def.layout : ensureLayout(def);
-  if (layout) kids.push(diagramToXml(def, layout, ctx));
+  if (layout) kids.push(...diagramToXml(def, layout, ctx));
+  kids.push(...lasts);
 
   const root = el(`${P}:definitions`, defAttrs, kids);
   /*
@@ -279,14 +298,16 @@ function completeNamespaceDecls(root: XmlBuilder, def: ProcessDefinition): void 
 
 function processToXml(proc: Process, ctx: Ctx): XmlBuilder {
   const kids: XmlChild[] = [];
-  const ext = extensionToXml(proc.extension, 'Process', ctx);
-  if (ext) kids.push(ext);
+  // `tBaseElement` 的 sequence：`documentation*` → `extensionElements?`（文档必须在扩展之前）
   if (proc.description !== undefined) kids.push(el(`${P}:documentation`, {}, [proc.description]));
   for (const d of proc.extraDocumentations ?? []) kids.push(el(`${P}:documentation`, {}, [d]));
+  const ext = extensionToXml(proc.extension, 'Process', ctx);
+  if (ext) kids.push(ext);
+  kids.push(...bpmnSnapshotChildren(proc.extension, 'early'));
 
   /*
    * ★ 顺序**不是**排版偏好，是 XSD 的 `xsd:sequence`：
-   * `extensionElements` → `laneSet*` → `flowElement*` → `artifact*`。
+   * `documentation*` → `extensionElements?` → `laneSet*` → `flowElement*` → `artifact*`。
    * 泳道写在节点之后、或批注夹在节点之间，产出的是**非法** BPMN
    * （bpmn-moddle 报 unparsable，严格 XSD 校验器直接拒收）。
    */
@@ -301,6 +322,8 @@ function processToXml(proc: Process, ctx: Ctx): XmlBuilder {
   kids.push(...flowEls);
   for (const f of proc.flows) kids.push(flowToXml(f, ctx));
   kids.push(...artifacts);
+  // 保全下来的 artifact（association / textAnnotation / group）同样只能排在最后
+  kids.push(...bpmnSnapshotChildren(proc.extension, 'artifact'));
 
   return el(
     `${P}:process`,
@@ -361,47 +384,95 @@ function nodeToXml(node: FlowNode, ctx: Ctx): XmlBuilder {
    * ★ 组 A：BPMN 规范属性（§6.6）—— **一等字段，不是 extension**。
    * 顺序固定（输出确定），且**不受 `includeExtensions` 门控**：
    * 净化剔除的是 `floken:*` 自有语义与第三方扩展，规范属性是 BPMN 本体，剔了就不是 BPMN 了。
+   *
+   * ★★ 但**只在规范允许该类型拥有这个属性时才写**。
+   * 判据与 §6.6 定案同源：`effectiveProperties(typeName).isAttr`。
+   * 例：`messageRef` 是 `messageEventDefinition` / `sendTask` / `receiveTask` 的属性，
+   * 却**不是** `intermediateCatchEvent` 的 —— 以前无条件写，产出
+   * `cvc-complex-type.3.2.2: 属性 'messageRef' 不允许出现`（官方 XSD 直接拒收）。
+   * 同类的还有 `operationRef`（只 service/send/receiveTask）、`gatewayDirection`（只 gateway）、
+   * `dataObjectRef`（只 dataObjectReference）……
+   * 写了就是非法 XML，所以这里**跳过并告警**（纪律一：不静默丢）。
    */
-  if (node.defaultFlow !== undefined) attrs['default'] = node.defaultFlow;
-  if (node.implementation !== undefined) attrs['implementation'] = node.implementation;
-  if (node.operationRef !== undefined) attrs['operationRef'] = node.operationRef;
-  if (node.messageRef !== undefined) attrs['messageRef'] = node.messageRef;
-  if (node.scriptFormat !== undefined) attrs['scriptFormat'] = node.scriptFormat;
-  if (node.gatewayDirection !== undefined) attrs['gatewayDirection'] = node.gatewayDirection;
-  if (node.triggeredByEvent !== undefined) attrs['triggeredByEvent'] = node.triggeredByEvent;
-  if (node.calledElement !== undefined) attrs['calledElement'] = node.calledElement;
-  if (node.dataObjectRef !== undefined) attrs['dataObjectRef'] = node.dataObjectRef;
-  if (node.dataStoreRef !== undefined) attrs['dataStoreRef'] = node.dataStoreRef;
+  const props = effectiveProperties(typeName);
+  const putSpec = (xmlName: string, v: string | number | boolean | undefined): void => {
+    if (v === undefined) return;
+    if (props.get(xmlName)?.isAttr === true) {
+      attrs[xmlName] = v;
+      return;
+    }
+    ctx.warn(
+      diagnostic(
+        'warn',
+        MODDLE_DIAGNOSTIC_CODES.VALIDATE_ATTR_NOT_ALLOWED,
+        `规范属性 '${xmlName}' 不属于 '${typeName}'，导出时已跳过（写上就是非法 BPMN）`,
+        {
+          node: { id: node.id, path: `processes[].nodes[${node.id}].${xmlName}` },
+          suggestions: [
+            `该属性只属于拥有它的 BPMN 类型（例如 messageRef → messageEventDefinition / sendTask / receiveTask）`,
+          ],
+        },
+      ),
+    );
+  };
+  putSpec('default', node.defaultFlow);
+  putSpec('implementation', node.implementation);
+  putSpec('operationRef', node.operationRef);
+  putSpec('messageRef', node.messageRef);
+  putSpec('scriptFormat', node.scriptFormat);
+  putSpec('gatewayDirection', node.gatewayDirection);
+  putSpec('triggeredByEvent', node.triggeredByEvent);
+  putSpec('calledElement', node.calledElement);
+  putSpec('dataObjectRef', node.dataObjectRef);
+  putSpec('dataStoreRef', node.dataStoreRef);
   // 组 A 第二批（执行语义关键）
-  if (node.isForCompensation !== undefined) attrs['isForCompensation'] = node.isForCompensation;
-  if (node.startQuantity !== undefined) attrs['startQuantity'] = node.startQuantity;
-  if (node.completionQuantity !== undefined) attrs['completionQuantity'] = node.completionQuantity;
-  if (node.cancelActivity !== undefined) attrs['cancelActivity'] = node.cancelActivity;
-  if (node.isInterrupting !== undefined) attrs['isInterrupting'] = node.isInterrupting;
-  if (node.eventGatewayType !== undefined) attrs['eventGatewayType'] = node.eventGatewayType;
-  if (node.instantiate !== undefined) attrs['instantiate'] = node.instantiate;
-  if (node.parallelMultiple !== undefined) attrs['parallelMultiple'] = node.parallelMultiple;
-  if (node.itemSubjectRef !== undefined) attrs['itemSubjectRef'] = node.itemSubjectRef;
-  if (node.isCollection !== undefined) attrs['isCollection'] = node.isCollection;
+  putSpec('isForCompensation', node.isForCompensation);
+  putSpec('startQuantity', node.startQuantity);
+  putSpec('completionQuantity', node.completionQuantity);
+  putSpec('cancelActivity', node.cancelActivity);
+  putSpec('isInterrupting', node.isInterrupting);
+  putSpec('eventGatewayType', node.eventGatewayType);
+  putSpec('instantiate', node.instantiate);
+  putSpec('parallelMultiple', node.parallelMultiple);
+  putSpec('itemSubjectRef', node.itemSubjectRef);
+  putSpec('isCollection', node.isCollection);
+  // 组 A 第三批：`association` 的端点（XSD required）
+  putSpec('sourceRef', node.sourceRef);
+  putSpec('targetRef', node.targetRef);
+  putSpec('associationDirection', node.associationDirection);
 
   const kids: XmlChild[] = [];
+  // `tBaseElement` 的 sequence：`documentation*` → `extensionElements?`
   if (node.description !== undefined) kids.push(el(`${P}:documentation`, {}, [node.description]));
   for (const d of node.extraDocumentations ?? []) kids.push(el(`${P}:documentation`, {}, [d]));
+  const ext = extensionToXml(node.extension, typeName, ctx);
+  if (ext) kids.push(ext);
+  kids.push(...bpmnSnapshotChildren(node.extension, 'early'));
   // ★ `<bpmn:text>` 是 textAnnotation 的规范子元素（不是扩展），只能挂在它身上
   if (node.text !== undefined && node.type === 'textAnnotation') {
     kids.push(el(`${P}:text`, {}, [node.text]));
   }
-  const ext = extensionToXml(node.extension, typeName, ctx);
-  if (ext) kids.push(ext);
   if (node.eventDefinition) kids.push(eventDefinitionToXml(node.eventDefinition));
   // 规范**子元素**（不是属性）：`<bpmn:script>` / `<bpmn:activationCondition>`
   if (node.script !== undefined) kids.push(el(`${P}:script`, {}, [node.script]));
   if (node.activationCondition !== undefined) {
     kids.push(formalExpressionEl('activationCondition', node.activationCondition, false));
   }
-  // 容器：内嵌元素直接写在元素里（BPMN 的 subProcess 本就如此，没有单独的容器元素）
-  if (node.nodes?.length) for (const n of node.nodes) kids.push(nodeToXml(n, ctx));
+  /*
+   * 容器：内嵌元素直接写在元素里（BPMN 的 subProcess 本就如此，没有单独的容器元素）。
+   * ★ 子流程内部同样受 `flowElement*` → `artifact*` 的 sequence 约束 ——
+   * 只在 `<process>` 那一层做分段是不够的（MIWG C.6.0 就是子流程里的 association 违规）。
+   */
+  const flowEls: XmlChild[] = [];
+  const artifacts: XmlChild[] = [];
+  for (const n of node.nodes ?? []) {
+    const target = findCoverage(n.type)?.family === 'artifact' ? artifacts : flowEls;
+    target.push(nodeToXml(n, ctx));
+  }
+  kids.push(...flowEls);
   if (node.flows?.length) for (const f of node.flows) kids.push(flowToXml(f, ctx));
+  kids.push(...artifacts);
+  kids.push(...bpmnSnapshotChildren(node.extension, 'artifact'));
 
   return el(`${P}:${node.type}`, attrs, kids);
 }
@@ -521,14 +592,19 @@ function messageFlowToXml(mf: MessageFlow, ctx: Ctx): XmlBuilder {
 
 function flowToXml(flow: Flow, ctx: Ctx): XmlBuilder {
   const kids: XmlChild[] = [];
-  // `documentation` 必须写在 `conditionExpression` 之前（XSD：基类 sequence 在前）
+  /*
+   * ★ `tSequenceFlow` 的 content model 是 `documentation*` → `extensionElements?` → `conditionExpression`。
+   * 曾经把 `extensionElements` 写在 `conditionExpression` **之后**，官方 XSD 直接拒收
+   * （`cvc-complex-type.2.4.d: 此处不应含有子元素`，MIWG 转一圈后 17 条违规）。
+   */
   if (flow.description !== undefined) kids.push(el(`${P}:documentation`, {}, [flow.description]));
   for (const d of flow.extraDocumentations ?? []) kids.push(el(`${P}:documentation`, {}, [d]));
+  const ext = extensionToXml(flow.extension, 'SequenceFlow', ctx);
+  if (ext) kids.push(ext);
+  kids.push(...bpmnSnapshotChildren(flow.extension, 'early'));
   if (flow.condition !== undefined) {
     kids.push(formalExpressionEl('conditionExpression', flow.condition, true));
   }
-  const ext = extensionToXml(flow.extension, 'SequenceFlow', ctx);
-  if (ext) kids.push(ext);
 
   return el(
     `${P}:sequenceFlow`,
@@ -589,7 +665,51 @@ function eventDefinitionToXml(ed: EventDefinition): XmlBuilder {
 // extension 保全（纪律一）
 // ─────────────────────────────────────────────────────────────────
 
-const RESERVED_EXT_KEYS: readonly string[] = Object.freeze(['floken:approval', '_extensionElements']);
+const RESERVED_EXT_KEYS: readonly string[] = Object.freeze([
+  'floken:approval',
+  '_extensionElements',
+  '_bpmnChildren',
+]);
+
+/** 快照片段串的根元素**本地名**（`<semantic:import .../>` → `import`），用于决定它该排在父元素的哪一段 */
+function snapshotLocalName(s: string): string {
+  const m = /^<([^\s/>]+)/.exec(s.trim());
+  if (!m) return '';
+  return splitQName(m[1] as string).local;
+}
+
+/**
+ * ★ 覆盖表外、但属于 **BPMN 命名空间**的元素（`_bpmnChildren`）**不能**进 `<bpmn:extensionElements>`。
+ *
+ * 官方 XSD 里 `extensionElements` 的内容是 `<xsd:any namespace="##other" processContents="lax"/>` ——
+ * 只允许**非 BPMN 命名空间**的东西。`ioSpecification` / `multiInstanceLoopCharacteristics` /
+ * `potentialOwner` / `dataInput` … 这些规范元素曾经也被塞进去，
+ * MIWG 语料转一圈后产出 **83 条 XSD 违规**（前面 14 道门禁一条都没看见，全靠 `check:xsd` 暴露）。
+ *
+ * → 它们必须**原地回写**成父元素的直接子元素，位置按 XSD 的 sequence：
+ *   `tActivity` / `tCallableElement` / `tProcess` 都是
+ *   「`documentation*` → `extensionElements?` → `ioSpecification`/`property`/`loopCharacteristics` …
+ *    → `laneSet*` → `flowElement*` → `artifact*`」，
+ *   所以统一排在**已知节点之前**。
+ */
+/** BPMN 里属于 **artifact 段**的元素：XSD 要求它们排在所有 `flowElement`（含 sequenceFlow）**之后** */
+const ARTIFACT_TAGS: readonly string[] = Object.freeze(['association', 'textAnnotation', 'group']);
+
+function bpmnSnapshotChildren(
+  ext: ExtensionBag | undefined,
+  kind: 'early' | 'artifact',
+): XmlChild[] {
+  if (!ext) return [];
+  const arr = ext['_bpmnChildren'];
+  if (!Array.isArray(arr)) return [];
+  const out: XmlChild[] = [];
+  for (const s of arr) {
+    if (typeof s !== 'string' || !s) continue;
+    const isArtifact = ARTIFACT_TAGS.includes(snapshotLocalName(s));
+    if (isArtifact === (kind === 'artifact')) out.push(new RawXml(s));
+  }
+  return out;
+}
 
 /**
  * `extension` 里**能写成 XML 属性**的部分（与 {@link extensionToXml} 互补，两处判据必须一致）。
@@ -675,7 +795,8 @@ function extensionToXml(ext: ExtensionBag | undefined, typeName: string, ctx: Ct
 // DI（bpmndi）
 // ─────────────────────────────────────────────────────────────────
 
-function diagramToXml(def: ProcessDefinition, layout: Layout, ctx: Ctx): XmlBuilder {
+/** 返回 **多个** `<bpmndi:BPMNDiagram>`：XSD 规定一个 diagram 只能装一个 plane */
+function diagramToXml(def: ProcessDefinition, layout: Layout, ctx: Ctx): XmlChild[] {
   /*
    * ★ 两个都是**互操作实证**抓出来的真 bug（原实现只靠结构断言，看不出来）：
    *
@@ -747,7 +868,7 @@ function diagramToXml(def: ProcessDefinition, layout: Layout, ctx: Ctx): XmlBuil
     }
   };
 
-  const planes: XmlChild[] = [];
+  const diagrams: XmlChild[] = [];
   for (const plane of layout.planes) {
     /*
      * ★ 指向模型里没有的元素时（悬浮坐标）必须**说出来**，不能静默丢掉 ——
@@ -817,14 +938,23 @@ function diagramToXml(def: ProcessDefinition, layout: Layout, ctx: Ctx): XmlBuil
       );
     }
 
-    planes.push(
-      el(`${DI}:BPMNPlane`, { id: allocId(plane.id), bpmnElement: plane.elementId }, [
-        ...shapeEls,
-        ...edges,
+    /*
+     * ★ 一个 `BPMNDiagram` **只允许一个** `BPMNPlane`。
+     *
+     * BPMNDI.xsd：`BPMNDiagram` 的 content model 是 `BPMNPlane, BPMNLabelStyle*` ——
+     * 曾经把多个 plane 塞进同一个 diagram，官方 XSD 直接拒收（14 条违规）。
+     * → 每个 plane 各起一个 `BPMNDiagram`，id 走 `allocId` 保证不撞。
+     */
+    diagrams.push(
+      el(`${DI}:BPMNDiagram`, { id: allocId(`${def.id}_diagram`) }, [
+        el(`${DI}:BPMNPlane`, { id: allocId(plane.id), bpmnElement: plane.elementId }, [
+          ...shapeEls,
+          ...edges,
+        ]),
       ]),
     );
   }
-  return el(`${DI}:BPMNDiagram`, { id: allocId(`${def.id}_diagram`) }, planes);
+  return diagrams;
 }
 
 /**

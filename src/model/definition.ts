@@ -19,7 +19,11 @@ import {
   type Diagnostic,
 } from '../core/errors.js';
 import { ALL_COVERED_ELEMENTS, findCoverage } from '../spec/coverage.js';
-import { BPMN_EventBasedGatewayType, BPMN_GatewayDirection } from '../spec/enums.generated.js';
+import {
+  BPMN_AssociationDirection,
+  BPMN_EventBasedGatewayType,
+  BPMN_GatewayDirection,
+} from '../spec/enums.generated.js';
 import { BPMN_TYPES, isSubtypeOf, xmlNameOf } from '../spec/index.js';
 import { validateApproval, type Approval } from './approval.js';
 import { validateLayout, LayoutSchema, type Layout } from './layout.js';
@@ -163,6 +167,18 @@ export interface FlowNode extends BaseNode {
   dataStoreRef?: string | undefined;
   /** → `<bpmn:activationCondition>` 子元素（`complexGateway`；L2 可存，L3 不承诺） */
   activationCondition?: string | FormalExpression | undefined;
+  /*
+   * ── 组 A 第三批：`association` 的端点 ──
+   * XSD 里 `tAssociation` 的 `sourceRef` / `targetRef` 是 **required**，
+   * 缺了就是非法 BPMN（官方 XSD 实测：`cvc-complex-type.4: 元素 'bpmn:association' 中必须包含属性 'sourceRef'`）。
+   * 没有这两个字段，`association` 就只能"保全不能建模" —— 而它偏偏是图面常用元素。
+   */
+  /** → `sourceRef`（`association`：起点元素 id） */
+  sourceRef?: string | undefined;
+  /** → `targetRef`（`association`：终点元素 id） */
+  targetRef?: string | undefined;
+  /** → `associationDirection`（`association`：`None` / `One` / `Both`） */
+  associationDirection?: AssociationDirection | undefined;
 
   // ── 组 A 第二批：同样是 `isAttr` 规范属性，且**执行语义关键** ──
   // 判据与第一批完全相同（类型表 `effectiveProperties().isAttr`），
@@ -196,6 +212,9 @@ export type GatewayDirection = (typeof BPMN_GatewayDirection)[number];
 
 /** `eventGatewayType` 的合法取值 —— **由枚举表推导，不手列** */
 export type EventGatewayType = (typeof BPMN_EventBasedGatewayType)[number];
+
+/** `associationDirection` 的合法取值 —— **由枚举表推导，不手列** */
+export type AssociationDirection = (typeof BPMN_AssociationDirection)[number];
 
 /**
  * `id` 的合法性（XSD `xsd:ID` = **NCName**）。
@@ -507,6 +526,10 @@ const FlowNodeSchema: z.ZodType<FlowNode> = z.lazy(
         dataObjectRef: z.string().optional(),
         dataStoreRef: z.string().optional(),
         activationCondition: z.union([z.string(), FormalExpressionSchema]).optional(),
+        // 组 A 第三批：`association` 的端点（XSD 里是 required，缺了就是非法 BPMN）
+        sourceRef: z.string().min(1).optional(),
+        targetRef: z.string().min(1).optional(),
+        associationDirection: z.string().optional(),
         // 组 A 第二批（执行语义关键，类型按 XSD：布尔 / integer / string）
         isForCompensation: z.boolean().optional(),
         startQuantity: z.number().int().nonnegative().optional(),
@@ -729,6 +752,38 @@ export function validateDefinition(
             },
           ),
         );
+      }
+
+      /*
+       * `association` 的端点在 XSD 里是 **required**：
+       * 缺了导出就是非法 XML（官方 XSD 实测 `cvc-complex-type.4: 元素 'bpmn:association' 中必须包含属性 'sourceRef'`），
+       * 而调用方**看不出来** —— 我们自己的解析器宽容读得回来。故在导出前拦住。
+       */
+      if (node.type === 'association') {
+        if (node.sourceRef === undefined || node.targetRef === undefined) {
+          out.push(
+            diagnostic(
+              'error',
+              MODDLE_DIAGNOSTIC_CODES.VALIDATE_DANGLING_REF,
+              `association '${node.id}' 缺 sourceRef / targetRef（XSD 里这两个是必填）`,
+              { node: { id: node.id, path: joinPath(nBase, 'sourceRef') } },
+            ),
+          );
+        }
+        const ad = node.associationDirection;
+        if (ad !== undefined && !BPMN_AssociationDirection.includes(ad)) {
+          out.push(
+            diagnostic(
+              'error',
+              MODDLE_DIAGNOSTIC_CODES.VALIDATE_TYPE,
+              `associationDirection '${ad}' 不是 BPMN 规范取值`,
+              {
+                node: { id: node.id, path: joinPath(nBase, 'associationDirection') },
+                expected: [...BPMN_AssociationDirection],
+              },
+            ),
+          );
+        }
       }
 
       // 审批语义

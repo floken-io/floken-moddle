@@ -151,6 +151,15 @@ export const MODDLE_DIAGNOSTIC_CODES = {
    */
   VALIDATE_INVALID_ID: 'MODDLE_VALIDATE_INVALID_ID',
   /**
+   * 导出：组 A 一等字段的值**不属于该元素类型**（写了就是非法 BPMN）。
+   *
+   * ★ **必发 warn**：不写等于丢数据，静默丢弃违反 §4.5 纪律一。
+   * 判据 = `effectiveProperties(typeName).isAttr`（与 §6.6 定案同源）。
+   * 例：`messageRef` 挂在 `intermediateCatchEvent` 上 → 官方 XSD
+   * `cvc-complex-type.3.2.2: 属性 'messageRef' 不允许出现`。
+   */
+  VALIDATE_ATTR_NOT_ALLOWED: 'MODDLE_VALIDATE_ATTR_NOT_ALLOWED',
+  /**
    * 导入宽容：BPMN 命名空间里**覆盖表未登记**的元素已原样快照保全（纪律一）。
    *
    * **warn 不是 error** —— 以前默认是 throw，实证结果是 **22 份 MIWG 真实语料 0 份能导入**

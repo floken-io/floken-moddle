@@ -210,7 +210,13 @@ const samples = {
           },
           { id: 'e', type: 'endEvent', name: '结束' },
           { id: 'ta', type: 'textAnnotation', text: '这是一条注释' },
-          { id: 'as', type: 'association', associationDirection: 'None' },
+          {
+            id: 'as',
+            type: 'association',
+            sourceRef: 'ta',
+            targetRef: 't1',
+            associationDirection: 'None',
+          },
         ],
         flows: [
           { id: 'f1', from: 's', to: 'sub' },
