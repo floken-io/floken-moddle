@@ -2,13 +2,8 @@
   "name": "@floken-io/moddle",
   "version": "0.0.2",
   "description": "BPMN 2.0 metamodel + Model JSON + JSON↔XML + validation for floken",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/floken-io/floken-moddle.git"
-  },
-  "bugs": {
-    "url": "https://github.com/floken-io/floken-moddle/issues"
-  },
+  "repository": { "type": "git", "url": "git+https://github.com/floken-io/floken-moddle.git" },
+  "bugs": { "url": "https://github.com/floken-io/floken-moddle/issues" },
   "homepage": "https://github.com/floken-io/floken-moddle#readme",
   "author": "MaxLMGC",
   "type": "module",
@@ -43,7 +38,7 @@
     "test": "vitest run",
     "gen:spec": "node scripts/gen-bpmn-spec.mjs",
     "check:spec": "node scripts/gen-bpmn-spec.mjs --check",
-    "verify": "node tooling/verify.mjs",
+       "verify": "node tooling/verify.mjs",
     "ac-s1": "node examples/gen-sample.mjs && node tooling/ac-s1.mjs",
     "miwg": "node tooling/fetch-miwg.mjs && node tooling/miwg.mjs",
     "interop": "node tooling/interop.mjs",
