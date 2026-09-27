@@ -12,8 +12,8 @@
  *
  * 用法：node run.mjs
  */
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { javaAvailable, runJava } from '../lib/run-java.mjs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -39,7 +39,7 @@ const check = (ok, label, extra = '') => {
 // ─────────────────────────────────────────────────────────────────
 let javaOk = true;
 try {
-  execFileSync('java', ['-version'], { stdio: 'pipe' });
+  javaOk = javaAvailable();
 } catch {
   javaOk = false;
 }
@@ -51,7 +51,9 @@ if (!javaOk || !existsSync(join(XSD_DIR, 'BPMN20.xsd'))) {
 // ─────────────────────────────────────────────────────────────────
 // 2. 生成我们自己的各类导出样本
 // ─────────────────────────────────────────────────────────────────
-rmSync(OUT, { recursive: true, force: true });
+// 只建目录、按名覆盖，不做 rmSync 清空：
+//   ① 输出文件名稳定（样本名 + miwg-<原名>），覆盖即等价，清空没有收益；
+//   ② 目录里是几百份中间产物，整目录递归删除会触发沙箱的批量删除保护，把门禁搞崩。
 mkdirSync(OUT, { recursive: true });
 
 const base = (extra = {}) => ({
@@ -269,14 +271,17 @@ if (existsSync(MIWG_DIR)) {
 // 4. 交给官方 XSD
 // ─────────────────────────────────────────────────────────────────
 const all = [...written, ...corpus];
-const runJava = (paths) => {
-  const out = execFileSync(
-    'java',
-    [join(HERE, 'XsdCheck.java'), XSD_DIR, ...paths],
-    { maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' },
-  );
+const runJavaBatch = (paths) => {
+  const { stdout, ok, error, stderr } = runJava({
+    sandboxRoot: WS,
+    label: 'xsd-check',
+    classpath: [],
+    source: join(HERE, 'XsdCheck.java'),
+    args: [XSD_DIR, ...paths],
+  });
+  if (!ok && !stdout.trim()) console.log(`        Java 调用失败：${error} ${stderr.slice(0, 200)}`);
   const perFile = new Map();
-  for (const line of out.split('\n')) {
+  for (const line of stdout.split('\n')) {
     if (!line.trim()) continue;
     const [kind, ...rest] = line.split('\t');
     if (kind === 'FILE') perFile.set(rest[0], { count: Number(rest[1]), errs: [] });
@@ -292,7 +297,7 @@ const runJava = (paths) => {
 const perFile = new Map();
 for (let i = 0; i < all.length; i += 20) {
   const batch = all.slice(i, i + 20);
-  const r = runJava(batch.map((x) => x.p));
+  const r = runJavaBatch(batch.map((x) => x.p));
   for (const [k, v] of r) perFile.set(k, v);
 }
 

@@ -62,13 +62,24 @@ describe('泳道（laneSet / lane）', () => {
     expect(out.indexOf('<bpmn:laneSet')).toBeLessThan(out.indexOf('<bpmn:startEvent'));
   });
 
-  it('autoLayout 不给泳道画假框', () => {
+  /*
+   * 泳道的图形：历史上做过两个极端，都错 ——
+   *  ① 早期泳道被当成**顶层 flow node** 塞进 `nodes`，autoLayout 给它画 100×80 的**假框**；
+   *  ② 修好 ① 之后泳道干脆**没有**图形，导出到画布上泳道不可见（bpmn-visualization 实测）。
+   * 现在是第三条路：泳道有**真**图形 —— 用它名下节点的包围盒算出来，laneSet 本身仍不是图元。
+   */
+  it('autoLayout 给泳道画**真**框（节点包围盒），但不给 laneSet 画', () => {
     const def = fromXmlSync(SWIMLANE);
     const layout = autoLayout(def);
-    const ids = Object.keys(layout.planes[0]!.shapes);
-    expect(ids).toContain('t1');
-    expect(ids).not.toContain('LS1');
-    expect(ids).not.toContain('L1');
+    const shapes = layout.planes[0]!.shapes;
+    expect(Object.keys(shapes)).toContain('t1');
+    expect(Object.keys(shapes)).toContain('L1');
+    expect(Object.keys(shapes)).not.toContain('LS1'); // laneSet 是容器不是图元
+    // 不是 100×80 的假框：它必须包住自己名下的节点
+    const lane = shapes['L1']!;
+    const t1 = shapes['t1']!;
+    expect(lane.width).toBeGreaterThan(t1.width);
+    expect(lane.x).toBeLessThanOrEqual(t1.x);
   });
 
   it('flowNodeRef 指向不存在的节点 → warn（不是 error：归属错了只是渲染问题）', () => {

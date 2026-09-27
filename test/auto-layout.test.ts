@@ -235,13 +235,29 @@ describe('autoLayout · 边界情况', () => {
   });
 });
 
-describe('ensureLayout · 缺哪补哪', () => {
+/*
+ * 口径：**没有 layout 才生成；有 layout 就一字不改地用。**
+ *
+ * 改成这样是第二十道门禁（跨解析器结构比对）逼出来的，两条实打实的证据：
+ *   ① 追加成多余的图 —— plane 是以 **process** 为 `bpmnElement` 生成的，
+ *      而别人的文件里 plane 常挂在 **collaboration** 上，对不上就整份追加：
+ *      MIWG A.4.0 原 1 张图，转一圈变 3 张。
+ *   ② 给作者没画的元素补框（`dataObject` …）—— 每一家 parser 都看得出文件被加工过。
+ * 所以不再合并，只保留"从零布局"这一条路径。
+ */
+describe('ensureLayout · 有则原样，无则生成', () => {
   it('没有 layout 时整体生成', () => {
     const m = model();
     expect(ensureLayout(m)).toEqual(autoLayout(m));
   });
 
-  it('★ 已有坐标不被覆盖（用户手摆过的不能被动改掉）', () => {
+  it('planes 为空数组时也算"没有"，照旧整体生成', () => {
+    const m = model();
+    m.layout = { planes: [] };
+    expect(ensureLayout(m).planes.length).toBe(autoLayout(m).planes.length);
+  });
+
+  it('★ 已有 layout 一字不改：既不动已摆的坐标，也不给没摆的元素补框', () => {
     const m = model();
     m.layout = {
       planes: [
@@ -254,20 +270,25 @@ describe('ensureLayout · 缺哪补哪', () => {
       ],
     };
     const l = ensureLayout(m);
+    expect(l.planes.length).toBe(1); // 没有多出来的自动布局图
     expect(l.planes[0]!.shapes['T1']).toMatchObject({ x: 999, y: 888 });
-    // 没摆过的照旧自动生成
-    expect(l.planes[0]!.shapes['S']).toBeDefined();
+    // 作者没摆的元素**不替他摆**（缺少坐标应由调用方显式调用 autoLayout 决定）
+    expect(l.planes[0]!.shapes['S']).toBeUndefined();
   });
 
-  it('用户自定义的 plane 也保留', () => {
+  it('自定义 plane 原样保留，且不夹带 process 的自动布局 plane', () => {
     const m = model();
     m.layout = {
-      planes: [
-        { id: 'custom', elementId: 'Other_Process', shapes: {}, edges: {} },
-      ],
+      planes: [{ id: 'custom', elementId: 'Other_Process', shapes: {}, edges: {} }],
     };
     const ids = ensureLayout(m).planes.map((p) => p.elementId);
-    expect(ids).toContain('Other_Process');
-    expect(ids).toContain('Process_1');
+    expect(ids).toEqual(['Other_Process']);
+  });
+
+  it('★ 幂等：自己的导出再导一次，plan 数与 shape 数都不变', () => {
+    const m = model();
+    const once = ensureLayout(m);
+    const twice = ensureLayout({ ...m, layout: once });
+    expect(twice).toEqual(once);
   });
 });

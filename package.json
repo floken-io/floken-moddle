@@ -1,5 +1,5 @@
 {
-  "name": "floken-moddle",
+  "name": "@floken/moddle",
   "version": "0.0.0",
   "description": "BPMN 2.0 metamodel + Model JSON + JSON↔XML + validation for floken",
   "repository": { "type": "git", "url": "git+https://github.com/floken-io/floken-moddle.git" },

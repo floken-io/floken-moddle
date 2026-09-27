@@ -166,7 +166,10 @@ try {
   }
 
   const leaked = paths.filter(
-    (p) => /(^|\/)(src|test)\//.test(p) || (/\.ts$/.test(p) && !p.endsWith('.d.ts')),
+    (p) =>
+      /(^|\/)(src|test)\//.test(p) ||
+      (/\.ts$/.test(p) && !p.endsWith('.d.ts')) ||
+      /\.map$/.test(p), // ★ sourcemap 的 sourcesContent 会夹带原始 TS 源码，禁止进包
   );
   if (leaked.length) bad('check:pack', '泄漏源码/测试: ' + leaked.join(', '));
   else ok('check:pack', `${paths.length} 个文件${degraded ? '（退化口径）' : ''}`);
@@ -216,7 +219,7 @@ if (existsSync(dist)) {
 }
 
 // 4.5 check:spec —— BPMN 类型表契约（137/318 + abstract 交叉校验）
-//     ⚠️ 这是 floken-moddle 的**专属第七道**，不在通用六道里。
+//     ⚠️ 这是 @floken/moddle 的**专属第七道**，不在通用六道里。
 //     它需要生成期的外部源（bpmn-moddle 描述符 + OMG Semantic.xsd）；
 //     源不在时**跳过**而不是判 fail —— 源是一次性脚本的输入，不进 CI 依赖链。
 {
@@ -382,6 +385,115 @@ if (existsSync(dist)) {
       ok('check:interop-full', '多库 × 双向：5 个对照物导入导出全通');
     } catch (e) {
       bad('check:interop-full', '多库双向互操作失败（见上方报告）');
+      console.error((e.stdout?.toString?.() || '') + (e.stderr?.toString?.() || '') + (e.message || ''));
+    }
+  }
+}
+
+/*
+ * 4.13 check:xsd —— **官方 OMG BPMN 2.0 XSD 校验**（FR-S14 的真正落地）。
+ *
+ * 前面 14 道验的都是「别的解析器认不认」，这一道验的是 **规范本身认不认**：
+ * 把文件直接喂给 OMG 发布的 BPMN20.xsd（JDK 自带 JAXP，零第三方依赖）。
+ *
+ * 它一上来就抓出了 14 道门禁**全都看不见**的 124 条违规（语料转一圈后），
+ * 根因四类：① 规范元素塞进 `extensionElements`（XSD 那里只收 `##other` 命名空间）；
+ * ② `sequenceFlow` 的 `extensionElements` 写到了 `conditionExpression` 之后；
+ * ③ 一个 `BPMNDiagram` 塞了多个 `BPMNPlane`；④ 属性挂错了元素类型（`messageRef` 挂在 catchEvent 上）。
+ */
+{
+  const script = join(root, 'tooling', 'xsd-check', 'run.mjs');
+  if (!existsSync(script)) {
+    console.log('\u00b7 check:xsd \u2014 跳过（脚本不在本机）');
+  } else {
+    try {
+      run(script, []);
+      ok('check:xsd', '我们导出的文件 + 语料往返产物全部符合官方 BPMN 2.0 XSD');
+    } catch (e) {
+      bad('check:xsd', '导出的文件不符合官方 XSD（见上方报告）');
+      console.error((e.stdout?.toString?.() || '') + (e.stderr?.toString?.() || '') + (e.message || ''));
+    }
+  }
+}
+
+/*
+ * 4.14 check:java-interop —— **Java 引擎生态**对照物（Camunda 7 `camunda-bpmn-model`）。
+ *
+ * `check:xsd` 验的是规范，`check:interop-full` 验的是 JS / 浏览器生态（bpmn-moddle / bpmnlint /
+ * bpmn-engine）。企业里跑 BPMN 的主力其实是 Java 引擎（Camunda 7 / Flowable / Activiti 同族），
+ * 它们的解析器与 JS 侧**没有任何共享代码**，是真正的独立第二意见 ——
+ * 顺便跑一遍 Camunda 自带的校验器（Java 生态的 lint）。
+ */
+{
+  const script = join(root, 'tooling', 'javainterop', 'run.mjs');
+  const jars = join(root, '..', '..', '.workbuddy', '_bpmn-sandbox', 'jars', 'camunda-bpmn-model-7.20.0.jar');
+  if (!existsSync(script) || !existsSync(jars)) {
+    console.log('\u00b7 check:java-interop \u2014 跳过（需要 JDK 与 Camunda jar）');
+  } else {
+    try {
+      run(script, []);
+      ok('check:java-interop', 'Camunda Java 解析器：语义按真引用/真属性读回，语料转一圈不比基线差');
+    } catch (e) {
+      bad('check:java-interop', 'Java 生态不通（见上方报告）');
+      console.error((e.stdout?.toString?.() || '') + (e.stderr?.toString?.() || '') + (e.message || ''));
+    }
+  }
+}
+
+/*
+ * 4.15 check:canvas —— **画布**对照物（bpmn-visualization，mxGraph 真实渲染）。
+ *
+ * 前面所有对照物验的都是「解析器认不认」，而画布是**把 DI 真的画出来** ——
+ * 坐标错、泳道丢了、连线走向不对，图上立刻看得见。
+ * 它抓到过：autoLayout 只给节点/连线生成坐标，**泳道和池没有 shape**
+ * （新建的泳道流程导出后在画布上根本没有泳道）。
+ */
+{
+  const script = join(root, 'tooling', 'canvas-render.mjs');
+  const bv = join(root, '..', '..', '.workbuddy', '_bpmn-sandbox', 'node_modules', 'bpmn-visualization', 'dist', 'bpmn-visualization.esm.js');
+  if (!existsSync(script) || !existsSync(bv) || !existsSync(join(root, 'dist', 'index.js'))) {
+    console.log('\u00b7 check:canvas \u2014 跳过（沙箱缺 jsdom / bpmn-visualization 或 dist 不在本机）');
+  } else {
+    try {
+      run(script, []);
+      ok('check:canvas', '画布渲染：图元数与 kind 正确，泳道/池可见，语料转一圈后不抛错');
+    } catch (e) {
+      bad('check:canvas', '画布渲染失败（见上方报告）');
+      console.error((e.stdout?.toString?.() || '') + (e.stderr?.toString?.() || '') + (e.message || ''));
+    }
+  }
+}
+
+/*
+ * 4.16 check:graph-equiv —— **跨解析器结构等价**（为什么它排在最后面）。
+ *
+ * 前面 15 道验的其实都是同一件事的不同切面：**能不能读回来**
+ * （数量守恒、XSD 合法、画布能画、别人的解析器不抛错）。
+ * 但对引擎真正致命的是另一类问题：元素一个都没少，可
+ * **连线的两端对错了 / 网关默认分支丢了 / 边界事件没挂对宿主 / 坐标被删了**。
+ * 这类错，数量守恒类的检查一条都抓不到。
+ *
+ * 所以这里把每份文件在**每一家眼里**的图抽成结构指纹，再断言：
+ *   A. 语料原文件 vs 我们转一圈的产物，**同一家 parser 的指纹逐字相同**；
+ *   B. 我们模型的意图 == 五家从我们导出结果里读出来的节点集与连线集。
+ *
+ * 已经抓到过两个真 bug（`test/di-fidelity.test.ts` 钉死）：
+ *   · 只保全元素的 `BPMNShape` 被当成悬空 DI 删掉（MIWG C.5.0 丢 25 个 shape）
+ *   · `ensureLayout` 往已有 layout 上追加 process plane（A.4.0 由 1 张图变 3 张）
+ */
+{
+  const script = join(root, 'tooling', 'cross-parser.mjs');
+  if (!existsSync(script) || !existsSync(join(root, 'dist', 'index.js'))) {
+    console.log('\u00b7 check:graph-equiv \u2014 跳过（脚本或 dist 不在本机）');
+  } else {
+    try {
+      run(script, []);
+      ok(
+        'check:graph-equiv',
+        '跨解析器结构等价：每一家都看不出我们转过一圈，且我们模型的意图 == 五家读回的图',
+      );
+    } catch (e) {
+      bad('check:graph-equiv', '结构指纹前后不一致（见上方报告）');
       console.error((e.stdout?.toString?.() || '') + (e.stderr?.toString?.() || '') + (e.message || ''));
     }
   }

@@ -35,6 +35,7 @@ import {
   type Participant,
   type Process,
   type ProcessDefinition,
+  snapshotElementIds,
 } from '../model/definition.js';
 import type { Layout, ShapeLayout } from '../model/layout.js';
 import { findCoverage } from '../spec/coverage.js';
@@ -171,7 +172,7 @@ export function toXmlSync(def: ProcessDefinition, opts: ToXmlOptions = {}): stri
    *
    * ★ 且**不受 `includeExtensions` 门控**：净化（§6.4）剔的是**审批语义**扩展
    * （`floken:approval` / `floken:formKey` …），而这两个是 **Model JSON 自身的格式身份**。
-   * 曾经跟着一起剔 → 净化导出再读回，`schemaVersion` 从 `2.3.4` 悄悄变回 `1.0.0`、
+   * 若跟着一起剔 → 净化导出再读回，`schemaVersion` 会从 `2.3.4` 悄悄变回 `1.0.0`、
    * `version` 直接消失 —— 一份文件被静默换了个身份，这比"文件里多两个属性"严重得多。
    */
   defAttrs[`${FLOKEN_PREFIX}:schemaVersion`] = def.schemaVersion ?? MODEL_SCHEMA_VERSION;
@@ -183,7 +184,7 @@ export function toXmlSync(def: ProcessDefinition, opts: ToXmlOptions = {}): stri
    *   `import*` → `extension*` → `rootElement*` → `BPMNDiagram*` → `relationship*`
    * （BPMN20.xsd 的 `tDefinitions`）。
    *
-   * 曾经把 `extraElements` 一律追加到最后 —— MIWG 的 `<bpmn:import>` 因此落到了
+   * 把 `extraElements` 一律追加到最后的话 —— MIWG 的 `<bpmn:import>` 会落到
    * `BPMNDiagram` 之后，官方 XSD 直接拒收（6 条违规）。→ 按标签分三段放。
    */
   const extras = (Array.isArray(def.extraElements) ? def.extraElements : []).filter(
@@ -388,7 +389,7 @@ function nodeToXml(node: FlowNode, ctx: Ctx): XmlBuilder {
    * ★★ 但**只在规范允许该类型拥有这个属性时才写**。
    * 判据与 §6.6 定案同源：`effectiveProperties(typeName).isAttr`。
    * 例：`messageRef` 是 `messageEventDefinition` / `sendTask` / `receiveTask` 的属性，
-   * 却**不是** `intermediateCatchEvent` 的 —— 以前无条件写，产出
+   * 却**不是** `intermediateCatchEvent` 的 —— 若无条件写，会产出
    * `cvc-complex-type.3.2.2: 属性 'messageRef' 不允许出现`（官方 XSD 直接拒收）。
    * 同类的还有 `operationRef`（只 service/send/receiveTask）、`gatewayDirection`（只 gateway）、
    * `dataObjectRef`（只 dataObjectReference）……
@@ -594,7 +595,7 @@ function flowToXml(flow: Flow, ctx: Ctx): XmlBuilder {
   const kids: XmlChild[] = [];
   /*
    * ★ `tSequenceFlow` 的 content model 是 `documentation*` → `extensionElements?` → `conditionExpression`。
-   * 曾经把 `extensionElements` 写在 `conditionExpression` **之后**，官方 XSD 直接拒收
+   * 把 `extensionElements` 写在 `conditionExpression` **之后**的话，官方 XSD 直接拒收
    * （`cvc-complex-type.2.4.d: 此处不应含有子元素`，MIWG 转一圈后 17 条违规）。
    */
   if (flow.description !== undefined) kids.push(el(`${P}:documentation`, {}, [flow.description]));
@@ -683,7 +684,7 @@ function snapshotLocalName(s: string): string {
  *
  * 官方 XSD 里 `extensionElements` 的内容是 `<xsd:any namespace="##other" processContents="lax"/>` ——
  * 只允许**非 BPMN 命名空间**的东西。`ioSpecification` / `multiInstanceLoopCharacteristics` /
- * `potentialOwner` / `dataInput` … 这些规范元素曾经也被塞进去，
+ * `potentialOwner` / `dataInput` … 这些规范元素若也被塞进去，
  * MIWG 语料转一圈后产出 **83 条 XSD 违规**（前面 14 道门禁一条都没看见，全靠 `check:xsd` 暴露）。
  *
  * → 它们必须**原地回写**成父元素的直接子元素，位置按 XSD 的 sequence：
@@ -849,6 +850,14 @@ function diagramToXml(def: ProcessDefinition, layout: Layout, ctx: Ctx): XmlChil
     for (const ls of proc.laneSets ?? []) walkLanes(ls.lanes);
     walk(proc.nodes, proc.flows);
   }
+  /*
+   * ★ 只保全、不建模的元素（`dataInput` / `dataOutput` / `data*Association` / `group` …）
+   * 在导出 XML 里**还在**（原样快照写回），所以它们的坐标是合法的、必须留着。
+   * 这里只认"建模了的 id"的话，MIWG 上会出现 **元素还在、框没了** 的真丢数据
+   * （跨解析器比对实测：C.5.0 丢 25 个 shape、C.4.0 丢 12 个）。
+   * 口径与校验器共用 `snapshotElementIds()`，详见该函数注释。
+   */
+  for (const id of snapshotElementIds(def)) known.add(id);
   // ⚠️ plane 的 id **不预加**进 `used`：它要参与 `allocId()` 的竞争，
   // 与语义元素撞车时由它让位（语义 id 被引用绑死，改不得）。
   // 预加了就会无条件被判成"已占用"，每次导出都被改成 `_2`。
@@ -942,7 +951,7 @@ function diagramToXml(def: ProcessDefinition, layout: Layout, ctx: Ctx): XmlChil
      * ★ 一个 `BPMNDiagram` **只允许一个** `BPMNPlane`。
      *
      * BPMNDI.xsd：`BPMNDiagram` 的 content model 是 `BPMNPlane, BPMNLabelStyle*` ——
-     * 曾经把多个 plane 塞进同一个 diagram，官方 XSD 直接拒收（14 条违规）。
+     * 把多个 plane 塞进同一个 diagram，官方 XSD 直接拒收（14 条违规）。
      * → 每个 plane 各起一个 `BPMNDiagram`，id 走 `allocId` 保证不撞。
      */
     diagrams.push(

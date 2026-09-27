@@ -275,7 +275,7 @@ export function fromXmlSync(xml: string | Uint8Array, opts: FromXmlOptions = {})
    * 编排族 / 会话族 / `<bpmn:message>` / `<bpmn:signal>` / `<bpmn:error>` /
    * `<bpmn:itemDefinition>` / `<bpmn:interface>` / `<bpmn:relationship>` …
    *
-   * ★ 这些以前是**静默丢弃**的，后果不只是"少了点数据"：
+   * ★ 静默丢弃这些的后果不只是"少了点数据"：
    * `<bpmn:message id="Msg_1">` 被丢后，事件里 `messageRef="Msg_1"` 变成**悬空引用**，
    * 导出的文件在我们自己的校验里都会报 dangling ref。
    */
@@ -339,13 +339,23 @@ export function fromXmlSync(xml: string | Uint8Array, opts: FromXmlOptions = {})
   }
 
   // ── DI ──
-  const diagram = childByNs(root, BPMNDI_NS, 'BPMNDiagram');
-  if (diagram) {
+  /*
+   * ★ 遍历**全部** `<bpmndi:BPMNDiagram>`，不是一个。
+   *
+   * BPMNDI.xsd 规定一个 diagram 只装一个 plane，所以我们导出时就是「一图一 plane」。
+   * 只读第一个 diagram 是不够的 —— 老实现把所有 plane 塞进同一个 diagram 才侥幸没出问题。
+   * 一图一 plane 之下，只读第一个就会**丢掉协作图那个 plane**（MIWG A.4.0 实测：
+   * 第二轮导入只剩 process 的 plane，幂等性从 22/22 掉到 8/22）。
+   */
+  const diagrams = childrenByNs(root, BPMNDI_NS, 'BPMNDiagram');
+  if (diagrams.length) {
     const ownerOf = buildOwnerMap(def);
     const planes: PlaneLayout[] = [];
-    for (const planeEl of childrenByNs(diagram, BPMNDI_NS, 'BPMNPlane')) {
-      const plane = planeFromXml(planeEl, ownerOf);
-      if (plane) planes.push(plane);
+    for (const diagram of diagrams) {
+      for (const planeEl of childrenByNs(diagram, BPMNDI_NS, 'BPMNPlane')) {
+        const plane = planeFromXml(planeEl, ownerOf, ctx);
+        if (plane) planes.push(plane);
+      }
     }
     if (planes.length) def.layout = { planes };
   }
@@ -459,7 +469,7 @@ function nodeFromXml(el: XmlElement, ctx: Ctx): FlowNode | undefined {
        * ★ 规范里存在、但覆盖表未登记的元素（`ioSpecification` / `dataInputAssociation` /
        * `multiInstanceLoopCharacteristics` / `potentialOwner` / `text` …）→ **原样快照保全**。
        *
-       * 以前这里是 `unsupported()` 抛错，实证结果是 **22 份 MIWG 语料 0 份能导入** ——
+       * 若在这里 `unsupported()` 抛错，实证结果是 **22 份 MIWG 语料 0 份能导入** ——
        * 拒收真实文件比多一个保全字段严重得多（§4.5 纪律一：认不出的东西一律保全）。
        */
       preserveElement(child, node, ctx, `processes[].nodes[${node.id}].nodes[].type`);
@@ -621,7 +631,7 @@ function usedPrefixes(el: XmlElement, out: Set<string> = new Set()): Set<string>
 /**
  * ★ 命名空间声明**只在快照的根元素上写一次**。
  *
- * 以前每个子元素都各带一份 `xmlns:camunda` —— 合法但冗余，且让快照每往返一轮就胖一圈
+ * 每个子元素都各带一份 `xmlns:camunda` 的话 —— 合法但冗余，且让快照每往返一轮就胖一圈
  * （长文件里这一项能占到快照体积的三分之一）。声明一次即可覆盖整棵子树。
  */
 function toBuilder(el: XmlElement): XmlBuilder {
@@ -674,7 +684,11 @@ function buildOwnerMap(def: ProcessDefinition): Map<string, string> {
   return map;
 }
 
-function planeFromXml(el: XmlElement, ownerOf: Map<string, string>): PlaneLayout | undefined {
+function planeFromXml(
+  el: XmlElement,
+  ownerOf: Map<string, string>,
+  ctx: Ctx,
+): PlaneLayout | undefined {
   const elementId = attrOf(el, 'bpmnElement');
   if (elementId === undefined) return undefined;
   const plane: PlaneLayout = {
@@ -693,7 +707,21 @@ function planeFromXml(el: XmlElement, ownerOf: Map<string, string>): PlaneLayout
     for (const shapeEl of childrenByNs(parent, BPMNDI_NS, 'BPMNShape')) {
       const id = attrOf(shapeEl, 'bpmnElement');
       const bounds = childByNs(shapeEl, DC_NS, 'Bounds');
-      if (id === undefined || !bounds) continue;
+      if (id === undefined || !bounds) {
+        /*
+         * ★ 别静默丢：没有 `Bounds`（或没有 `bpmnElement`）的 shape 是**残缺的图面信息**，
+         * 一旦悄悄跳过，用户只会看到"某个框不见了"。补这条 warn 的代价远小于漏�一条资产。
+         */
+        ctx.warn(
+          diagnostic(
+            'warn',
+            MODDLE_DIAGNOSTIC_CODES.VALIDATE_DI_INCOMPLETE,
+            `BPMNShape 缺 ${id === undefined ? 'bpmnElement' : 'Bounds'}，它的坐标已跳过`,
+            { node: { path: `layout.planes[${plane.id}]` } },
+          ),
+        );
+        continue;
+      }
       const shape: ShapeLayout = {
         x: readNumber(attrOf(bounds, 'x')) ?? 0,
         y: readNumber(attrOf(bounds, 'y')) ?? 0,
@@ -725,7 +753,25 @@ function planeFromXml(el: XmlElement, ownerOf: Map<string, string>): PlaneLayout
     if (id === undefined) continue;
     const waypoints = childrenByNs(edgeEl, DI_NS, 'waypoint')
       .map((w) => ({ x: readNumber(attrOf(w, 'x')) ?? 0, y: readNumber(attrOf(w, 'y')) ?? 0 }));
-    if (waypoints.length < 2) continue;
+    if (waypoints.length < 2) {
+      /*
+       * ★ 同 shape：连线的走向必须有至少两个 waypoint 才成立（首尾各一个）。
+       * 少于两个就被跳过 —— 若**静默**跳过，实测（`di-fidelity` 回归）会表现为
+       * "这条边的坐标没了"，而导线/element 本身还在，极难归因。
+       *
+       * ⚠️ `waypoint` 属于 **`http://www.omg.org/spec/DD/20100524/DI`**，不是 BPMN 那个 DI；
+       * 命名空间写错就会走到这里（真实语料里 `xmlns:di` 一律指向 DD/DI，见 MIWG A.1.0）。
+       */
+      ctx.warn(
+        diagnostic(
+          'warn',
+          MODDLE_DIAGNOSTIC_CODES.VALIDATE_DI_INCOMPLETE,
+          `BPMNEdge '${attrOf(edgeEl, 'id') ?? id}' 的 waypoint 不足 2 个（实得 ${waypoints.length}），它的走向已跳过`,
+          { node: { path: `layout.planes[${plane.id}]` } },
+        ),
+      );
+      continue;
+    }
     const edge: EdgeLayout = { waypoints };
     const label = childByNs(edgeEl, BPMNDI_NS, 'BPMNLabel');
     const lb = label ? childByNs(label, DC_NS, 'Bounds') : undefined;
@@ -902,7 +948,7 @@ function messageFlowFromXml(el: XmlElement): MessageFlow | undefined {
 
 function laneSetFromXml(el: XmlElement): LaneSet {
   // ★ `laneSet@id` 在 XSD 里 optional（MIWG `C.10.0` 的 laneSet 就没有 id）
-  // —— 不能像以前那样造一个空串 id 顶上，那会让校验器报 "Too small"。
+  // —— 不能造一个空串 id 顶上，那会让校验器报 "Too small"。
   const out: LaneSet = { lanes: [] };
   const id = attrOf(el, 'id');
   if (id !== undefined) out.id = id;

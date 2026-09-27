@@ -1,4 +1,4 @@
-# floken-moddle
+# @floken/moddle
 
 BPMN 2.0 的机器可读版本 + floken 的 JSON 模型 + JSON\u2194XML 转换 + 校验。
 
@@ -21,4 +21,4 @@ pnpm verify      # 六道发布门禁
 
 ## 依赖方向
 
-两个「层」之一，与 `floken-feel` 互不依赖；被 `engine` / `designer` / `dmn` 消费。
+两个「层」之一，与 `@floken/feel` 互不依赖；被 `engine` / `designer` / `dmn` 消费。

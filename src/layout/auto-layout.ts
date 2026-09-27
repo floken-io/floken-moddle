@@ -16,7 +16,7 @@
  * 边界事件不参与分层（它没有独立的拓扑位置，必须贴着宿主）。
  */
 
-import type { Flow, FlowNode, ProcessDefinition } from '../model/definition.js';
+import type { Flow, FlowNode, Lane, ProcessDefinition } from '../model/definition.js';
 import type { EdgeLayout, Layout, PlaneLayout, ShapeLayout } from '../model/layout.js';
 
 /** 每类元素的默认几何尺寸（设计器 palette 与自动布局共用同一张表） */
@@ -308,6 +308,55 @@ function edgeOf(from: Box | undefined, to: Box | undefined): { x: number; y: num
 }
 
 // ─────────────────────────────────────────────────────────────────
+// 泳道 / 池的图形
+// ─────────────────────────────────────────────────────────────────
+
+/** 泳道矩形在其内容之外的留白；池再外扩一圈；池左侧标签区宽度 */
+const LANE_MARGIN = 20;
+const POOL_MARGIN = 10;
+const POOL_LABEL_WIDTH = 30;
+
+/** 一条泳道名下的**全部**节点 id（含嵌套子泳道） */
+function laneNodeIds(lane: Lane): string[] {
+  const out: string[] = [...(lane.nodeIds ?? [])];
+  for (const child of lane.lanes ?? []) out.push(...laneNodeIds(child));
+  return out;
+}
+
+/** 若干矩形的并集；全空则 undefined */
+function unionOf(boxes: (Box | undefined)[]): Box | undefined {
+  let r: Box | undefined;
+  for (const b of boxes) {
+    if (!b) continue;
+    r = r
+      ? {
+          x: Math.min(r.x, b.x),
+          y: Math.min(r.y, b.y),
+          width:
+            Math.max(r.x + r.width, b.x + b.width) - Math.min(r.x, b.x),
+          height:
+            Math.max(r.y + r.height, b.y + b.height) - Math.min(r.y, b.y),
+        }
+      : { ...b };
+  }
+  return r;
+}
+
+const unionOfBoxes = (boxes: readonly Box[]): Box | undefined => unionOf([...boxes]);
+
+function padded(box: Box | undefined, m: number): Box | undefined {
+  if (!box) return undefined;
+  return { x: box.x - m, y: box.y - m, width: box.width + 2 * m, height: box.height + 2 * m };
+}
+
+const boxToShape = (b: Box): ShapeLayout => ({
+  x: round(b.x),
+  y: round(b.y),
+  width: round(b.width),
+  height: round(b.height),
+});
+
+// ─────────────────────────────────────────────────────────────────
 // 对外 API
 // ─────────────────────────────────────────────────────────────────
 
@@ -338,6 +387,40 @@ export function autoLayout(def: ProcessDefinition): Layout {
         ...(box.parent ? { parentId: box.parent } : {}),
         ...(isSub ? { isExpanded: true } : {}),
       };
+    }
+
+    /*
+     * ★ 泳道与池的图形 —— 只给节点/连线生成坐标、不给泳道 shape 的话：
+     * 导出的泳道图在画布上**看不到泳道**（bpmn-visualization 只认得出节点，
+     * 实测「两条泳道 + 池」只识别出 2 个图元）。泳道是中国式审批的高频需求（L1 必开），
+     * 没有图形等于没兑现。
+     *
+     * 算法：泳道 = 它名下节点包围盒 + padding；池 = 所有泳道包围盒 + 左侧标签区。
+     * （真实场景多数是**导入别人的泳道图**，那时坐标来自原文件 DI；这里兜的是「新建的泳道流程」。）
+     */
+    const laneBoxes: Box[] = [];
+    for (const ls of proc.laneSets ?? []) {
+      for (const lane of ls.lanes) {
+        const box = padded(unionOf(laneNodeIds(lane).map((id) => sink.get(id))), LANE_MARGIN);
+        if (!box) continue;
+        laneBoxes.push(box);
+        shapes[lane.id] = boxToShape(box);
+      }
+    }
+    for (const collab of def.collaborations ?? []) {
+      for (const p of collab.participants) {
+        if (p.processRef !== undefined && p.processRef !== proc.id) continue;
+        const inner = unionOfBoxes(laneBoxes) ?? unionOf(proc.nodes.map((n) => sink.get(n.id)));
+        const box = padded(inner, POOL_MARGIN);
+        if (!box) continue;
+        // 池的标签在左侧：整体向左让出一条
+        shapes[p.id] = boxToShape({
+          x: box.x - POOL_LABEL_WIDTH,
+          y: box.y,
+          width: box.width + POOL_LABEL_WIDTH,
+          height: box.height,
+        });
+      }
     }
 
     const edges: Record<string, EdgeLayout> = {};
@@ -376,35 +459,31 @@ export function autoLayout(def: ProcessDefinition): Layout {
 }
 
 /**
- * 缺哪补哪：已有 `layout` 时**保留**已有坐标，只为缺失的元素补。
- * `toXml` 用它 —— 用户手摆过的坐标不能被导出动作改掉。
+ * `toXml` 的布局入口。
+ *
+ * ★ 口径（第二十道门禁跨解析器比对改定的，理由写在下面，别改回去）：
+ *
+ *   **layout 一份都没有 → 全量生成**（新建模型的正常路径）
+ *   **layout 已经有了 → 原样返回，一个坐标都不动**
+ *
+ * 旧行为是"缺哪补哪"：把 `autoLayout()` 的全量结果与已有 layout 合并
+ * （`{...gen.shapes, ...cur.shapes}`），结果两个问题：
+ *
+ *   ① **凭空多图**：`autoLayout` 生成的 plane 以 **process** 为 `bpmnElement`，
+ *      而别人的文件里 plane 往往挂在 **collaboration** 上 → 对不上就整份追加出去。
+ *      MIWG A.4.0 实测：原 1 张图，转到我们手里变成 3 张（多出来的 2 张还是重复的）。
+ *   ② **给作者没画的元素补框**：`dataObject` 之类作者故意不给坐标的元素会被画上去，
+ *      于是每一家 parser 都看得出"这文件被人加工过"。
+ *
+ * 二者都直接违反 `fromXml → toXml` 的**恒等性**，而恒等性是比"每个元素都有坐标"
+ * 重要得多的承诺：坐标补不出来只是某元素没有图形，恒等不成立则意味着我们在
+ * 静默改写用户的排版资产。要补，请显式调用 `autoLayout()`；导出时不想补可传
+ * `{ autoLayout: false }`。
  */
 export function ensureLayout(def: ProcessDefinition): Layout {
-  const generated = autoLayout(def);
   const existing = def.layout;
-  if (!existing) return generated;
-
-  const planes: PlaneLayout[] = [];
-  for (let i = 0; i < generated.planes.length; i += 1) {
-    const gen = generated.planes[i];
-    if (!gen) continue;
-    const cur = existing.planes.find((p) => p.elementId === gen.elementId);
-    if (!cur) {
-      planes.push(gen);
-      continue;
-    }
-    planes.push({
-      id: cur.id || gen.id,
-      elementId: gen.elementId,
-      shapes: sortRecord({ ...gen.shapes, ...cur.shapes }),
-      edges: sortRecord({ ...gen.edges, ...cur.edges }),
-    });
-  }
-  // 用户自定义的 plane（指向我们没生成的 process）也保留
-  for (const p of existing.planes) {
-    if (!planes.some((q) => q.id === p.id)) planes.push(p);
-  }
-  return { planes };
+  if (!existing || existing.planes.length === 0) return autoLayout(def);
+  return { planes: existing.planes };
 }
 
 // ─────────────────────────────────────────────────────────────────

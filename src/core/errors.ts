@@ -1,5 +1,5 @@
 /**
- * floken-moddle · 错误与诊断契约（moddle 侧实现）
+ * @floken/moddle · 错误与诊断契约（moddle 侧实现）
  *
  * 五包通用的错误处理契约见仓库根 `AGENTS.md` §5「错误处理契约」。本档落实 moddle 这一侧，
  * 形态与 `floken-feel/src/core/errors.ts` **逐字对齐**（两包零互相依赖，故各写一份）：
@@ -162,11 +162,20 @@ export const MODDLE_DIAGNOSTIC_CODES = {
   /**
    * 导入宽容：BPMN 命名空间里**覆盖表未登记**的元素已原样快照保全（纪律一）。
    *
-   * **warn 不是 error** —— 以前默认是 throw，实证结果是 **22 份 MIWG 真实语料 0 份能导入**
+   * **warn 不是 error** —— 若按 error（默认 throw）处理，实证结果是 **22 份 MIWG 真实语料 0 份能导入**
    * （`incoming` / `outgoing` / `flowNodeRef` / `ioSpecification` …全在 bpmn 命名空间里）。
    * 拒收真实文件比多一个字段严重得多。
    */
   VALIDATE_ELEMENT_PRESERVED: 'MODDLE_VALIDATE_ELEMENT_PRESERVED',
+  /**
+   * **图面信息残缺**：`BPMNShape` 缺 `Bounds` / `bpmnElement`，或 `BPMNEdge` 的
+   * `waypoint` 不足 2 个 —— 这条 DI 无法成立，坐标会被跳过。
+   *
+   * **warn 不是 error**：图面信息不参与执行语义，文件本身仍可用；
+   * 但必须说出来 —— 静默丢坐标会让用户看到"框/线莫名少了一条"而无从归因
+   * （`waypoint` 命名空间写错是最常见的成因：它属于 DD/DI，不是 BPMN 的 DI 命名空间）。
+   */
+  VALIDATE_DI_INCOMPLETE: 'MODDLE_VALIDATE_DI_INCOMPLETE',
 } as const;
 
 export type ModdleErrorCode =

@@ -100,14 +100,14 @@ export interface BaseNode {
   description?: string | undefined;
   /**
    * → `<bpmn:text>`：**textAnnotation 的正文**（XSD 里是它的规范子元素，不是扩展）。
-   * 曾经被当成不认识的元素塞进 `extensionElements` 快照 —— 位置错了，还会凭空带一份 xmlns。
+   * 不能塞进 `extensionElements` 快照 —— 位置错了，还会凭空带一份 xmlns。
    */
   text?: string | undefined;
   /**
    * → 第 2 条及以后的 `<bpmn:documentation>`（XSD 是 `maxOccurs="unbounded"`，
    * 多语言文档常按 `xml:lang` 写多条）。
    *
-   * ★ 曾经只取第一条、其余**丢弃**（仅告警）→ MIWG `C.9.0` 实测往返丢 3 条。
+   * ★ 只取第一条、其余丢弃的话 → MIWG `C.9.0` 实测往返丢 3 条。
    * 单值的 `description` 装不下多份文档，但"装不下"不等于"可以丢"（纪律一）。
    */
   extraDocumentations?: string[] | undefined;
@@ -249,7 +249,7 @@ export interface Flow {
    * → `<bpmn:documentation>`（第 1 条）。
    *
    * ★ 连线同样继承自 `tBaseElement`，一样能挂文档 —— MIWG `C.9.0` 有 3 条文档就挂在
-   * `sequenceFlow` 上。曾经 `Flow` 没有这个字段 → 导入即丢。
+   * `sequenceFlow` 上；`Flow` 缺这个字段 → 导入即丢。
    */
   description?: string | undefined;
   /** → 第 2 条及以后的 `<bpmn:documentation>` */
@@ -276,7 +276,7 @@ export interface Flow {
 // 1. `<bpmn:laneSet>` 在 XSD 里是 **process 的直接子元素且排在 flowElement 之前**，
 //    它既不是节点也不能连线 —— 塞进 nodes 会污染引擎的遍历，autoLayout 还会给它画个假框；
 // 2. `<bpmn:participant>` / `<bpmn:messageFlow>` 在 **process 之外**（`collaboration` 下），
-//    nodes 根本装不下，之前只能整个丢掉（互操作实测：导入泳道图 → 导出后泳道全没）。
+//    nodes 根本装不下，只能整个丢掉（互操作实测：导入泳道图 → 导出后泳道全没）。
 // ─────────────────────────────────────────────────────────────────
 
 /** `<bpmn:lane>` —— 泳道（道）。`nodeIds` 是它真正的数据：哪些节点归这条道 */
@@ -296,7 +296,7 @@ export interface Lane {
 export interface LaneSet {
   /**
    * ★ XSD 里 `laneSet@id` 是 **optional**（`xsd:ID`，非必填）—— 真实文件里大量 `laneSet` 不带 id
-   * （MIWG `C.10.0` 实测）。曾经把它做成必填，导致导入合法文件后校验器报 error。
+   * （MIWG `C.10.0` 实测）；若做成必填，导入合法文件后校验器会报 error。
    * 缺省时导出不写该属性（XML 仍然合法）。
    */
   id?: string | undefined;
@@ -370,7 +370,7 @@ export interface ProcessDefinition {
    * `<bpmn:collaboration>` —— 泳道图 / 协作图根（participant 池 + messageFlow），**0..n**。
    *
    * ★ 为什么是数组：XSD 里 `definitions` 下的 `collaboration` 是 `maxOccurs="unbounded"`，
-   * 真实文件确有**多个**（MIWG `C.4.0` 有 4 个，每个各带 1 个池）。曾经只存一个 →
+   * 真实文件确有**多个**（MIWG `C.4.0` 有 4 个，每个各带 1 个池）。只存一个的话 →
    * 导入后 3 个池凭空消失、相关 `messageFlow` 变成悬空引用。
    *
    * 缺省 = 单流程（无池），这是最常见的形态。
@@ -381,7 +381,7 @@ export interface ProcessDefinition {
    * `<bpmn:signal>` / `<bpmn:error>` / `<bpmn:itemDefinition>` …）。
    *
    * ★ 为什么要有它：这些元素在 BPMN 里真实存在、且常被 `messageRef` 之类的引用指向。
-   * 以前它们被静默丢弃 → 导出后 `messageRef="Msg_1"` 变成**悬空引用**。
+   * 若静默丢弃 → 导出后 `messageRef="Msg_1"` 变成**悬空引用**。
    * 我们不建模，但必须保住（纪律一）。
    */
   extraElements?: string[] | undefined;
@@ -595,6 +595,57 @@ export interface ValidateDefinitionOptions {
  * ⚠️ 元素类型不在覆盖表给 **warn**：导入别人的图遇到没承诺的元素要**保全**（§4.5），
  * 拦在解析层等于静默丢弃。
  */
+/**
+ * **只保全、不建模**那些元素的 id —— 从 XML 快照字符串里抽 `id="..."`。
+ *
+ * 为什么必须抽：它们（`dataInput` / `dataOutput` / `data*Association` / `group` …）
+ * 没有进 `nodes`，但在**别人的文件里是有坐标的**，对应 `BPMNShape` 完全合法。
+ *
+ * ★ **单一事实源**：`validateLayout` 的 `knownIds` 与 `toXml` 的悬空 DI 判定
+ * 必须共用这一份口径 —— 两边各有一处手写版本的话，
+ *   · 校验器那边会漏掉 `_bpmnChildren`，
+ *   · 导出那边压根没有 → **元素保住了、坐标却被当成悬空 DI 删掉**。
+ * 后者是真正的数据丢失：跨解析器比对（第二十道门禁）在 MIWG 上实测抓到
+ * 8 份语料丢坐标（C.5.0 丢 25 个 shape），元素还在、框没了。
+ *
+ * 用途限定：只用于判断「这个 id 在导出的 XML 里到底存不存在」，不参与任何语义。
+ */
+export function snapshotElementIds(def: ProcessDefinition): Set<string> {
+  const ids = new Set<string>();
+  const ID_ATTR_RE = /\sid="([^"]+)"/g;
+  const walk = (v: unknown): void => {
+    if (typeof v === 'string') {
+      for (const m of v.matchAll(ID_ATTR_RE)) ids.add(m[1] as string);
+    } else if (Array.isArray(v)) {
+      for (const x of v) walk(x);
+    }
+  };
+  /** `_bpmnChildren`（BPMN 命名空间，原地写回）与 `_extensionElements`（第三方）都要抽 */
+  const addExt = (ext: Record<string, unknown> | undefined): void => {
+    if (!ext) return;
+    walk(ext['_bpmnChildren']);
+    walk(ext['_extensionElements']);
+  };
+  const walkNodes = (nodes: readonly FlowNode[], flows: readonly Flow[]): void => {
+    for (const n of nodes) {
+      addExt(n.extension);
+      if (n.nodes?.length || n.flows?.length) walkNodes(n.nodes ?? [], n.flows ?? []);
+    }
+    for (const f of flows) addExt(f.extension);
+  };
+
+  walk(def.extraElements);
+  for (const collab of def.collaborations ?? []) {
+    walk(collab.extraElements);
+    for (const p of collab.participants ?? []) addExt(p.extension);
+  }
+  for (const proc of def.processes) {
+    addExt(proc.extension);
+    walkNodes(proc.nodes, proc.flows);
+  }
+  return ids;
+}
+
 export function validateDefinition(
   input: unknown,
   opts: ValidateDefinitionOptions = {},
@@ -646,7 +697,7 @@ export function validateDefinition(
   /*
    * ★ 收集必须**递归进子流程**：子流程里的节点/连线同样是合法引用目标
    * （泳道 `flowNodeRef`、`sequenceFlow` 端点、`messageFlow` 端点、DI 的 `bpmnElement`）。
-   * 曾经只扫顶层 → 嵌套元素被判"不存在"，真实语料上一路误报几十条。
+   * 只扫顶层的话 → 嵌套元素被判"不存在"，真实语料上一路误报几十条。
    */
   const collectIds = (nodes: readonly FlowNode[], flows: readonly Flow[]): void => {
     for (const n of nodes) {
@@ -896,7 +947,7 @@ export function validateDefinition(
   /*
    * `messageFlow` 的两端**不只是 participant**：BPMN 允许它连 `FlowNode`
    * （池内某个活动/事件发消息给另一个池的节点），MIWG `A.4.0` 实测就是这样。
-   * 曾经只认 participant → 26 条 error 误报，把合法文件判成废。
+   * 只认 participant 的话 → 26 条 error 误报，把合法文件判成废。
    * 合法端点 = participant ∪ 所有 process 的 flowNode（含子流程内）。
    */
   const messageEndpoints = new Set<string>([...participantIds, ...nodeIds]);
@@ -952,31 +1003,8 @@ export function validateDefinition(
      * `group` …）。它们虽然没进 `nodes`，但在**原文件里是有坐标的**，
      * 对应 shape 一样合法 —— 不把它们的 id 算进来，真实语料会平白多出几十条
      * "shape 指向不存在的元素" 的噪音（MIWG 实测 76 条）。
-     *
-     * 它们的 id 只能从 XML 快照里取（快照本来就是原始字符串，取 `id="..."` 是安全的；
-     * 这里只用于判断"这个坐标是不是指着文件里真实存在的东西"，不参与任何语义）。
      */
-    const ID_ATTR_RE = /\sid="([^"]+)"/g;
-    const addSnapshotIds = (v: unknown): void => {
-      if (typeof v === 'string') {
-        for (const m of v.matchAll(ID_ATTR_RE)) knownIds.add(m[1] as string);
-      } else if (Array.isArray(v)) {
-        for (const x of v) addSnapshotIds(x);
-      }
-    };
-    addSnapshotIds(def.extraElements);
-    for (const collab of def.collaborations ?? []) addSnapshotIds(collab.extraElements);
-    const walkExt = (nodes: readonly FlowNode[], flows: readonly Flow[]): void => {
-      for (const n of nodes) {
-        addSnapshotIds(n.extension?.['_extensionElements']);
-        if (n.nodes?.length || n.flows?.length) walkExt(n.nodes ?? [], n.flows ?? []);
-      }
-      for (const f of flows) addSnapshotIds(f.extension?.['_extensionElements']);
-    };
-    for (const proc of def.processes) {
-      addSnapshotIds(proc.extension?.['_extensionElements']);
-      walkExt(proc.nodes, proc.flows);
-    }
+    for (const id of snapshotElementIds(def)) knownIds.add(id);
     out.push(...validateLayout(def.layout, { knownIds, path: 'layout' }));
   }
 
