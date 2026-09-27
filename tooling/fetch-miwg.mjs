@@ -17,7 +17,7 @@ const pkgRoot = dirname(here);
 const OUT = join(dirname(dirname(pkgRoot)), '.workbuddy/miwg');
 
 const API = 'https://api.github.com/repos/bpmn-miwg/bpmn-miwg-test-suite/contents';
-const HF = { Accept: 'application/vnd.github+json', 'User-Agent': '@floken/moddle' };
+const HF = { Accept: 'application/vnd.github+json', 'User-Agent': '@floken-io/moddle' };
 
 async function list(dir) {
   const r = await fetch(`${API}/${encodeURIComponent(dir)}?ref=master`, { headers: HF });

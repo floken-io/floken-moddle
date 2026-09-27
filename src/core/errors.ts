@@ -1,5 +1,5 @@
 /**
- * @floken/moddle · 错误与诊断契约（moddle 侧实现）
+ * @floken-io/moddle · 错误与诊断契约（moddle 侧实现）
  *
  * 五包通用的错误处理契约见仓库根 `AGENTS.md` §5「错误处理契约」。本档落实 moddle 这一侧，
  * 形态与 `floken-feel/src/core/errors.ts` **逐字对齐**（两包零互相依赖，故各写一份）：

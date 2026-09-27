@@ -219,7 +219,7 @@ if (existsSync(dist)) {
 }
 
 // 4.5 check:spec —— BPMN 类型表契约（137/318 + abstract 交叉校验）
-//     ⚠️ 这是 @floken/moddle 的**专属第七道**，不在通用六道里。
+//     ⚠️ 这是 @floken-io/moddle 的**专属第七道**，不在通用六道里。
 //     它需要生成期的外部源（bpmn-moddle 描述符 + OMG Semantic.xsd）；
 //     源不在时**跳过**而不是判 fail —— 源是一次性脚本的输入，不进 CI 依赖链。
 {

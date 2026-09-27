@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * gen-bpmn-spec.mjs — S0：生成 @floken/moddle 的 BPMN 2.0 类型表。
+ * gen-bpmn-spec.mjs — S0：生成 @floken-io/moddle 的 BPMN 2.0 类型表。
  *
  * 一次性脚本，**不进 dependencies**（生成的产物是我们自己的数据文件）。
  * 源有两个，各司其职：

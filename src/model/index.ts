@@ -1,5 +1,5 @@
 /**
- * `@floken/moddle` · Model JSON 层
+ * `@floken-io/moddle` · Model JSON 层
  *
  * 三份文件各管一件事：
  * - `approval.ts` —— ★ 中国式审批语义（类型 + zod + 组合矩阵 + 归一化），护城河所在；

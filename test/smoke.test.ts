@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { PACKAGE } from '../src/index';
 
-describe('@floken/moddle smoke', () => {
+describe('@floken-io/moddle smoke', () => {
   it('exposes package name', () => {
-    expect(PACKAGE).toBe('@floken/moddle');
+    expect(PACKAGE).toBe('@floken-io/moddle');
   });
 });
