@@ -2,6 +2,10 @@
   "name": "floken-moddle",
   "version": "0.0.0",
   "description": "BPMN 2.0 metamodel + Model JSON + JSON↔XML + validation for floken",
+  "repository": { "type": "git", "url": "git+https://github.com/floken-io/floken-moddle.git" },
+  "bugs": { "url": "https://github.com/floken-io/floken-moddle/issues" },
+  "homepage": "https://github.com/floken-io/floken-moddle#readme",
+  "author": "MaxLMGC",
   "type": "module",
   "sideEffects": false,
   "engines": {
