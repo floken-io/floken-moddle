@@ -3,6 +3,12 @@
 本包遵循 [Semantic Versioning](https://semver.org/)，格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 0.x 阶段跨包依赖写 `>=x.y.z <1.0.0`（不用 `^`）。
 
+## 0.0.3 — 2026-09-27
+
+### 修正
+
+- `files` 白名单补 `CHANGELOG.md`（0.0.2 漏了，导致本文件没进 tarball）。
+
 ## 0.0.2 — 2026-09-27
 
 ### 文档
