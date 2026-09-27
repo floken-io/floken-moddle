@@ -39,8 +39,8 @@
     "miwg": "node tooling/fetch-miwg.mjs && node tooling/miwg.mjs",
     "interop": "node tooling/interop.mjs",
     "changeset": "changeset",
-    "release": "pnpm build && pnpm verify && changeset publish",
-    "prepublishOnly": "pnpm build && pnpm verify"
+    "release": "npm run build && npm run verify && changeset publish",
+    "prepublishOnly": "npm run build && npm run verify"
   },
   "devDependencies": {
     "@changesets/cli": "3.0.3",
