@@ -757,20 +757,38 @@ export function shouldTerminate(
   const wait = (reason: string) =>
     ({ done: false, outcome: 'pending' as const, reason, cancelRest: false });
 
-  // 规则三（最后一人兜底）：所有人都表态过了 → 不再算比例，按已表态结果定
-  if (pending === 0) {
-    return done(passed > rejected ? 'approved' : 'rejected', '所有人已表态', true);
-  }
-
+  /*
+   * ★ **规则序修正（2026-10-01，`floken-engine` 的 D-21 / D-31）**
+   *
+   * 旧实现把「全员表态后按多数定（`pending === 0`）」放在**最前面**、且**不看 `mode`**，
+   * 于是会签 3 人「2 通过 1 驳回」被判成 **approved** —— 与会签的定义（**全部通过**才推进）
+   * 直接冲突，也违反 `03-engine` §5.2 的判定式（`approved + rejected >= total && rejected === 0`）。
+   *
+   * 根因：这条"多数决"压根不是 §4.4.1 的规则三。规则三写的是「**待办只剩 1 人**时不再算比例，
+   * 由该人决定」，是**票签**的兜底（防除不尽 / 永远卡住）；旧实现把它误写成 `pending === 0`
+   * 且提到模式判定之前，等于把"多数决"叠加到了会签的"全票决"上。
+   *
+   * ⇒ 修正为：**先按 `mode` 判各自的语义，"全员已表态"的兜底只对票签生效**。
+   */
   if (mode === 'any') {
     if (passed >= 1) return done('approved', '或签：一人通过即推进', true);
+    if (pending === 0) return done('rejected', '或签：全员已表态且无人通过', true);
     return wait('或签：等待任一通过');
   }
 
   if (mode === 'all') {
-    // 规则一（会签驳回即终止）
-    if (rejected >= 1 && abort) {
-      return done('rejected', '会签：任一人驳回即整体驳回（onReject=abort）', true);
+    // 规则一（会签驳回即终止）：会签 = 全票决，只要有人驳回，结果就必须是 rejected
+    if (rejected >= 1) {
+      /*
+       * ★ `onReject` 只决定**要不要提前终止**，不决定**最后按什么定**（D-31）：
+       *   - `'abort'` → 立即整体驳回并取消其余；
+       *   - `'wait'` 且还有人没表态 → 继续等（"记录驳回但其余继续"）；
+       *   - `'wait'` 且全员已表态 → 驳回，但不取消（已无人可取消）。
+       */
+      if (!abort && pending > 0) {
+        return wait('会签：已记录驳回，等待其余成员表态（onReject=wait）');
+      }
+      return done('rejected', abort ? '会签：任一人驳回即整体驳回（onReject=abort）' : '会签：有人驳回', abort);
     }
     if (passed === total) return done('approved', '会签：全部通过', true);
     return wait('会签：等待剩余人员');
@@ -786,6 +804,10 @@ export function shouldTerminate(
   // 规则二（票签反向提前终止）：剩余票已不可能凑够
   if (passed + pending < need) {
     return done('rejected', `票签：剩余 ${pending} 人即使全部通过也达不到 ${need} 票`, abort);
+  }
+  // 规则三（兜底）：全员表态后按已表态结果定 —— 只对票签成立（防除不尽 / 永远卡住）
+  if (pending === 0) {
+    return done(passed > rejected ? 'approved' : 'rejected', '票签：所有人已表态', true);
   }
   return wait(`票签：还需 ${need - passed} 票`);
 }

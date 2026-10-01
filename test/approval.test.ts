@@ -293,9 +293,28 @@ describe('★ 会签 / 票签的提前终止规则', () => {
     expect(shouldTerminate('vote', 3, 1, 2, { vote: { threshold: 0.5 } }).outcome).toBe('rejected');
   });
 
+  /**
+   * ★ **D-21 / D-31（2026-10-01 修）**：会签 = **全票决**，不得被"多数决"覆盖。
+   *
+   * 旧实现把「全员表态后按多数定」放在最前面且不看 `mode`，于是
+   * 会签 3 人「2 通过 1 驳回」被判 **approved** —— 流程在有人明确驳回的情况下通过了。
+   * `onReject` 只决定**要不要提前终止**，不决定**最后按什么定**，故 `wait` 同样必须是 rejected。
+   */
+  it('★ D-21：会签 2 通过 1 驳回 → **rejected**（不得按多数决判成 approved）', () => {
+    for (const onReject of ['abort', 'wait'] as const) {
+      expect(shouldTerminate('all', 3, 2, 1, { onReject }).outcome).toBe('rejected');
+    }
+    // 全员通过才算通过（1 通过 2 驳回同样 rejected）
+    expect(shouldTerminate('all', 3, 1, 2, { onReject: 'wait' }).outcome).toBe('rejected');
+    // 对照组：票签才是多数制（3 人需 2 票，2 通过 1 驳回 → approved）
+    expect(shouldTerminate('vote', 3, 2, 1, { vote: { threshold: 0.5 } }).outcome).toBe('approved');
+  });
+
   it('或签：一人通过即推进；无人通过且无人驳回则继续等', () => {
     expect(shouldTerminate('any', 3, 1, 0).outcome).toBe('approved');
     expect(shouldTerminate('any', 3, 0, 1).done).toBe(false);
+    // ★ 全员已表态且无人通过 → rejected（旧实现会在这里"永远等下去"）
+    expect(shouldTerminate('any', 3, 0, 3).outcome).toBe('rejected');
   });
 
   it('requiredVotes：threshold 向上取整（过半），count 收敛到总人数', () => {
