@@ -99,15 +99,6 @@ export const MODDLE_DIAGNOSTIC_CODES = {
   /** 规则层：id 重复 */
   VALIDATE_DUPLICATE_ID: 'MODDLE_VALIDATE_DUPLICATE_ID',
   /**
-   * 规则层：元素类型不在覆盖表内（warn 不是 error —— 保全优先，绝不静默丢弃）。
-   * 覆盖表见 `spec/coverage.ts`（27 类可执行 + 21 类不可执行）。
-   *
-   * ⚠️ **v2 起该码不再产生**：BPMN 覆盖表随 XML 一起删除，类型判定改由
-   * `VALIDATE_NODE_TYPE` 负责（白名单 = 引擎真正能分派的 21 类）。
-   * 码**保留不删**（错误码是发布后不得改名的稳定契约），仅供历史模型诊断对照。
-   */
-  VALIDATE_ELEMENT_UNSUPPORTED: 'MODDLE_VALIDATE_ELEMENT_UNSUPPORTED',
-  /**
    * ★ v2：节点 `type` 不在白名单 {@link NODE_TYPES} 内，也不在 `customNodeTypes` 里。
    *
    * **error 不是 warn**：拼错 `userTaks` 若被静默接受，引擎要等**令牌到达**才报
@@ -130,8 +121,8 @@ export const MODDLE_DIAGNOSTIC_CODES = {
   /**
    * ★ v2：`schemaVersion` 的 major 不是本包认识的版本。
    *
-   * **error 且不做迁移**：v1 → v2 不提供迁移（§10）。「读旧格式读出一个行为不同的流程」
-   * 比「当场报错」危险得多。
+   * **error 且不做迁移**：「读旧格式读出一个行为不同的流程」比「当场报错」危险得多。
+   * 本包不提供任何版本迁移函数（AGENTS.md §0.1：开发期不做兼容层）。
    */
   VALIDATE_SCHEMA_VERSION: 'MODDLE_VALIDATE_SCHEMA_VERSION',
   /**
@@ -146,19 +137,6 @@ export const MODDLE_DIAGNOSTIC_CODES = {
    * 而我们自己的读取是宽容的 —— 这类问题**只在交叉验证时才暴露**，必须在建模期拦住。
    */
   VALIDATE_INVALID_ID: 'MODDLE_VALIDATE_INVALID_ID',
-  /**
-   * 导出：一等字段的值**不属于该元素类型**。
-   *
-   * ⚠️ **v2 起该码不再产生**（判据 `effectiveProperties().isAttr` 随 BPMN 类型表删除）。
-   * 码保留不删（稳定契约），仅供历史模型诊断对照。
-   */
-  VALIDATE_ATTR_NOT_ALLOWED: 'MODDLE_VALIDATE_ATTR_NOT_ALLOWED',
-  /**
-   * 导入宽容：BPMN 命名空间里**覆盖表未登记**的元素已原样快照保全（纪律一）。
-   *
-   * ⚠️ **v2 起该码不再产生**（覆盖表随 XML 删除）。码保留不删，仅供历史模型诊断对照。
-   */
-  VALIDATE_ELEMENT_PRESERVED: 'MODDLE_VALIDATE_ELEMENT_PRESERVED',
   /**
    * **图面信息残缺**：连线折点不足 2 个，这条边无法成立，坐标会被跳过。
    *
