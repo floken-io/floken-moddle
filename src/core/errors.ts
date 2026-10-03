@@ -68,32 +68,6 @@ export const MODDLE_ERROR_CODES = {
    * 不要为每种校验失败各发一个码，那条路走下去码表会失控且无法稳定。
    */
   MODEL_VALIDATION_FAILED: 'MODDLE_MODEL_VALIDATION_FAILED',
-
-  // ── 以下为 M2（XML 读/写）新增 ──
-  /** XML 提前结束：标签未闭合 / 属性值没引号收尾 / CDATA 没结束 */
-  PARSE_UNEXPECTED_EOF: 'MODDLE_PARSE_UNEXPECTED_EOF',
-  /** 闭合标签与开始标签对不上（`<a></b>`） */
-  PARSE_MISMATCHED_TAG: 'MODDLE_PARSE_MISMATCHED_TAG',
-  /** 同一元素上重复属性（XML 规范明文禁止，脏文件里却常见） */
-  PARSE_DUPLICATE_ATTR: 'MODDLE_PARSE_DUPLICATE_ATTR',
-  /** 用了未声明的前缀（`<foo:bar/>` 而无 `xmlns:foo`）—— 命名空间栈没建起来 */
-  PARSE_UNDECLARED_PREFIX: 'MODDLE_PARSE_UNDECLARED_PREFIX',
-  /** 元素/属性名不合法（含空格、`<`、`&` 等） */
-  PARSE_INVALID_NAME: 'MODDLE_PARSE_INVALID_NAME',
-  /** 结构性畸形：多个根元素、`<?` 后不是合法 PI/CDATA、标记里出现裸 `<` 等 */
-  PARSE_MALFORMED: 'MODDLE_PARSE_MALFORMED',
-  /** ★ DTD 默认拒绝（XXE 防线）：出现 `<!DOCTYPE` 就抛，除非显式 `allowDoctype:true` */
-  PARSE_DOCTYPE_FORBIDDEN: 'MODDLE_PARSE_DOCTYPE_FORBIDDEN',
-  /** ★ 外部实体（`SYSTEM` / `PUBLIC`）一律拒绝展开 —— 自研最容易漏的一条 */
-  PARSE_EXTERNAL_ENTITY: 'MODDLE_PARSE_EXTERNAL_ENTITY',
-  /** 引用了未定义实体（`&foo;` 而 DTD 里没声明） */
-  PARSE_UNDEFINED_ENTITY: 'MODDLE_PARSE_UNDEFINED_ENTITY',
-  /** 序列化：值无法用 XML 表达（NaN/Infinity/undefined 进了必填位） */
-  XML_UNSUPPORTED_VALUE: 'MODDLE_XML_UNSUPPORTED_VALUE',
-  /** 转换：元素不在覆盖表内且 `onUnsupported:'throw'`（默认） */
-  XML_UNSUPPORTED_ELEMENT: 'MODDLE_XML_UNSUPPORTED_ELEMENT',
-  /** 转换：结构对不上（如 `<conditionExpression>` 既无文本又非表达式） */
-  XML_INVALID_CONTENT: 'MODDLE_XML_INVALID_CONTENT',
 } as const;
 
 /** 诊断类错误码（不抛，随结果返回） */
@@ -127,53 +101,69 @@ export const MODDLE_DIAGNOSTIC_CODES = {
   /**
    * 规则层：元素类型不在覆盖表内（warn 不是 error —— 保全优先，绝不静默丢弃）。
    * 覆盖表见 `spec/coverage.ts`（27 类可执行 + 21 类不可执行）。
+   *
+   * ⚠️ **v2 起该码不再产生**：BPMN 覆盖表随 XML 一起删除，类型判定改由
+   * `VALIDATE_NODE_TYPE` 负责（白名单 = 引擎真正能分派的 21 类）。
+   * 码**保留不删**（错误码是发布后不得改名的稳定契约），仅供历史模型诊断对照。
    */
   VALIDATE_ELEMENT_UNSUPPORTED: 'MODDLE_VALIDATE_ELEMENT_UNSUPPORTED',
   /**
-   * 导入宽容：条件表达式带 Camunda 8 风格的 `=` 前缀，已剥离（FR-9.12）。
-   * **warn 不是 error** —— 迁移过来的图不该被卡死在解析层。
-   */
-  VALIDATE_LEGACY_PREFIX: 'MODDLE_VALIDATE_LEGACY_PREFIX',
-  /**
-   * 导入宽容：`<bpmn:documentation>` 出现多条（BPMN 允许 `maxOccurs="unbounded"`，常按 `xml:lang` 分语言），
-   * 而 Model JSON 的 `description` 是**单值** —— 只有第一条进 `description`，其余被丢弃。
+   * ★ v2：节点 `type` 不在白名单 {@link NODE_TYPES} 内，也不在 `customNodeTypes` 里。
    *
-   * **必发 warn**：丢数据是"静默丢弃"，违反 §4.5 纪律一；发了诊断才叫"告知"。
-   * 要无损保全多语言文档须扩 `description` 的形态（v0.5 待决，见 01 §14.3）。
+   * **error 不是 warn**：拼错 `userTaks` 若被静默接受，引擎要等**令牌到达**才报
+   * 「未知节点类型」，排查成本高一个量级（§3.3）。
    */
-  VALIDATE_MULTI_DOCUMENTATION: 'MODDLE_VALIDATE_MULTI_DOCUMENTATION',
+  VALIDATE_NODE_TYPE: 'MODDLE_VALIDATE_NODE_TYPE',
   /**
-   * 规则层：`id` 不是合法的 `xsd:ID`（= NCName）。
+   * ★ v2：类型在白名单内，但**引擎尚未实现**（4 类）。
    *
-   * ★ **error 不是 warn**：非法 id 写出去的 XML 会被别人整体判废 ——
-   * bpmn-moddle 报 `illegal ID <1s>`、bpmn-js 丢图形（互操作实测）。
-   * 我们自己的 SAX 宽容读得回来，所以这类问题**只在交叉验证时才暴露**，必须在导出前拦住。
+   * **warn 不是 error** —— 建模期放行；引擎在令牌到达时抛错并指名归属 FR，
+   * **绝不静默直通**（AC-M2）。
+   */
+  VALIDATE_NODE_UNIMPLEMENTED: 'MODDLE_VALIDATE_NODE_UNIMPLEMENTED',
+  /**
+   * ★ v2：`extension` 袋里出现了模型的一等字段键（见 `NODE_RESERVED_KEYS`）。
+   *
+   * **error**：一等字段与袋里那份「哪个生效」会变成未定义行为（§4.5 硬边界）。
+   */
+  VALIDATE_RESERVED_KEY: 'MODDLE_VALIDATE_RESERVED_KEY',
+  /**
+   * ★ v2：`schemaVersion` 的 major 不是本包认识的版本。
+   *
+   * **error 且不做迁移**：v1 → v2 不提供迁移（§10）。「读旧格式读出一个行为不同的流程」
+   * 比「当场报错」危险得多。
+   */
+  VALIDATE_SCHEMA_VERSION: 'MODDLE_VALIDATE_SCHEMA_VERSION',
+  /**
+   * ★ v2：传给 `validateDefinition` 的选项名拼错。
+   * 落在诊断通道而不是抛出，是因为校验器**不因首错中断**的整体纪律（AC-M8）。
+   */
+  VALIDATE_UNKNOWN_OPTION: 'MODDLE_VALIDATE_UNKNOWN_OPTION',
+  /**
+   * 规则层：`id` 不是合法标识符（NCName 规则）。
+   *
+   * ★ **error 不是 warn**：非法 id 会被别人整体判废（bpmn-moddle 报 `illegal ID <1s>`），
+   * 而我们自己的读取是宽容的 —— 这类问题**只在交叉验证时才暴露**，必须在建模期拦住。
    */
   VALIDATE_INVALID_ID: 'MODDLE_VALIDATE_INVALID_ID',
   /**
-   * 导出：组 A 一等字段的值**不属于该元素类型**（写了就是非法 BPMN）。
+   * 导出：一等字段的值**不属于该元素类型**。
    *
-   * ★ **必发 warn**：不写等于丢数据，静默丢弃违反 §4.5 纪律一。
-   * 判据 = `effectiveProperties(typeName).isAttr`（与 §6.6 定案同源）。
-   * 例：`messageRef` 挂在 `intermediateCatchEvent` 上 → 官方 XSD
-   * `cvc-complex-type.3.2.2: 属性 'messageRef' 不允许出现`。
+   * ⚠️ **v2 起该码不再产生**（判据 `effectiveProperties().isAttr` 随 BPMN 类型表删除）。
+   * 码保留不删（稳定契约），仅供历史模型诊断对照。
    */
   VALIDATE_ATTR_NOT_ALLOWED: 'MODDLE_VALIDATE_ATTR_NOT_ALLOWED',
   /**
    * 导入宽容：BPMN 命名空间里**覆盖表未登记**的元素已原样快照保全（纪律一）。
    *
-   * **warn 不是 error** —— 若按 error（默认 throw）处理，实证结果是 **22 份 MIWG 真实语料 0 份能导入**
-   * （`incoming` / `outgoing` / `flowNodeRef` / `ioSpecification` …全在 bpmn 命名空间里）。
-   * 拒收真实文件比多一个字段严重得多。
+   * ⚠️ **v2 起该码不再产生**（覆盖表随 XML 删除）。码保留不删，仅供历史模型诊断对照。
    */
   VALIDATE_ELEMENT_PRESERVED: 'MODDLE_VALIDATE_ELEMENT_PRESERVED',
   /**
-   * **图面信息残缺**：`BPMNShape` 缺 `Bounds` / `bpmnElement`，或 `BPMNEdge` 的
-   * `waypoint` 不足 2 个 —— 这条 DI 无法成立，坐标会被跳过。
+   * **图面信息残缺**：连线折点不足 2 个，这条边无法成立，坐标会被跳过。
    *
-   * **warn 不是 error**：图面信息不参与执行语义，文件本身仍可用；
-   * 但必须说出来 —— 静默丢坐标会让用户看到"框/线莫名少了一条"而无从归因
-   * （`waypoint` 命名空间写错是最常见的成因：它属于 DD/DI，不是 BPMN 的 DI 命名空间）。
+   * **warn 不是 error**：图面信息不参与执行语义，定义本身仍可用；
+   * 但必须说出来 —— 静默丢坐标会让用户看到"线莫名少了一条"而无从归因。
    */
   VALIDATE_DI_INCOMPLETE: 'MODDLE_VALIDATE_DI_INCOMPLETE',
 } as const;

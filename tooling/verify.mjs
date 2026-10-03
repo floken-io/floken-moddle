@@ -227,305 +227,59 @@ try {
   else ok('check:deps', `dependencies = [${deps.join(', ') || '空'}]（白名单 ${ALLOWED.join('/')}）`);
 }
 
-/*
- * 4b. check:xmllib —— **Q38**：XML 读/写全部自研，dist 不得静态引入第三方 XML 库
- *     （saxen / saxes / xmlbuilder2 / fast-xml-parser / @xmldom 等，2026-09-26 已评估否决）。
- */
 const dist = join(root, 'dist');
-if (existsSync(dist)) {
-  const walkDir = (d) =>
-    readdirSync(d, { withFileTypes: true }).flatMap((e) =>
-      e.isDirectory() ? walkDir(join(d, e.name)) : [join(d, e.name)],
-    );
-  const js = walkDir(dist).filter((f) => f.endsWith('.js'));
-  const BANNED = ['saxen', 'saxes', 'xmlbuilder2', 'fast-xml-parser', '@xmldom/xmldom', 'bpmn-moddle'];
-  const hit = js
-    .map((f) => readFileSync(f, 'utf8'))
-    .join('\n')
-    .match(new RegExp(`from\\s+'(${BANNED.join('|')})`, 'g'));
-  if (hit) bad('check:xmllib', 'dist 中检出第三方 XML 库（Q38 违例）: ' + [...new Set(hit)].join(', '));
-  else ok('check:xmllib', '无第三方 XML 库静态引用（自研 SAX）');
-} else {
-  console.log('\u00b7 check:xmllib \u2014 跳过（dist 尚未构建）');
-}
-
-// 4.5 check:spec —— BPMN 类型表契约（137/318 + abstract 交叉校验）
-//     ⚠️ 这是 @floken-io/moddle 的**专属第七道**，不在通用六道里。
-//     它需要生成期的外部源（bpmn-moddle 描述符 + OMG Semantic.xsd）；
-//     源不在时**跳过**而不是判 fail —— 源是一次性脚本的输入，不进 CI 依赖链。
-{
-  const gen = join(root, 'scripts', 'gen-bpmn-spec.mjs');
-  const WS_ROOT = dirname(root);
-  const wsRoot = dirname(WS_ROOT);
-  const defaultSrc = join(wsRoot, '.workbuddy/_bpmn-sandbox/node_modules/bpmn-moddle/resources/bpmn/json');
-  const defaultXsd = join(wsRoot, '.workbuddy/tmp/Semantic.xsd');
-  if (!existsSync(gen)) {
-    bad('check:spec', 'scripts/gen-bpmn-spec.mjs 缺失');
-  } else if (!existsSync(defaultSrc) || !existsSync(defaultXsd)) {
-    console.log('\u00b7 check:spec \u2014 跳过（生成源不在本机，属预期：' +
-      'bpmn-moddle 描述符 / Semantic.xsd 是一次性脚本输入，不进依赖）');
-  } else {
-    try {
-      run(gen, ['--check']);
-      ok('check:spec', '类型表契约 137/318 与 XSD abstract 交叉校验通过');
-    } catch (e) {
-      bad('check:spec', '类型表与契约不符（见上方报告）');
-      console.error((e.stdout?.toString?.() || '') + (e.stderr?.toString?.() || '') + (e.message || ''));
-    }
-  }
-}
-
-// 4.6 check:ac-s1 —— AC-S1 实证：导出文件必须能被 bpmn-moddle（bpmn-js 解析内核）零 warning 解析。
-//     与 check:spec 同款策略：对照物不在本机就**跳过**，不判 fail（它不是依赖，也不进 dist）。
-{
-  const script = join(root, 'tooling', 'ac-s1.mjs');
-  const S = join(dirname(dirname(root)), '.workbuddy/_bpmn-sandbox/node_modules/bpmn-moddle/dist/index.js');
-  if (!existsSync(S)) {
-    console.log('\u00b7 check:ac-s1 \u2014 跳过（沙箱 bpmn-moddle 不在本机；属预期，它不是依赖）');
-  } else if (!existsSync(join(root, 'dist', 'index.js'))) {
-    bad('check:ac-s1', 'dist 未构建，无法实证（先跑 tsup）');
-  } else {
-    try {
-      run(script, []);
-      ok('check:ac-s1', 'bpmn-moddle 零 warning 解析 + DI 覆盖完整');
-    } catch (e) {
-      bad('check:ac-s1', '标准工具解析不通过（见上方报告）');
-      console.error((e.stdout?.toString?.() || '') + (e.stderr?.toString?.() || '') + (e.message || ''));
-    }
-  }
-}
-
-// 4.7 check:miwg —— FR-S15：MIWG 真实语料「导入不崩 + 二次导出幂等」。
-//     语料一次性抓取到工作区 `.workbuddy/miwg/`（`tooling/fetch-miwg.mjs`），
-//     不在本机时**跳过**（不进依赖链）。
-{
-  const CORPUS = join(dirname(dirname(root)), '.workbuddy/miwg');
-  if (!existsSync(CORPUS) || !existsSync(join(root, 'dist', 'index.js'))) {
-    console.log('\u00b7 check:miwg \u2014 跳过（语料或 dist 不在本机；先跑 tooling/fetch-miwg.mjs + tsup）');
-  } else {
-    try {
-      run(join(root, 'tooling', 'miwg.mjs'), []);
-      ok('check:miwg', 'MIWG 真实语料导入不崩、二次导出幂等');
-    } catch (e) {
-      bad('check:miwg', '真实语料不通过（见上方报告）');
-      console.error((e.stdout?.toString?.() || '') + (e.stderr?.toString?.() || '') + (e.message || ''));
-    }
-  }
-}
-
-// 4.8 check:interop —— 三向互操作实证（ours→别人 / 别人→ours / 真实语料闭环 / Camunda 扩展）。
-//     它是 ac-s1 的**加强版**：ac-s1 只验我们自己生成的文件，interop 还验「别人的文件经我们
-//     转一圈后仍能被别人读」—— DI 的 duplicate ID、悬空引用就是这么抓出来的。
-//     与 check:ac-s1 同款策略：对照物不在本机则跳过。
-{
-  const MODDLE = join(dirname(dirname(root)), '.workbuddy/_bpmn-sandbox/node_modules/bpmn-moddle/dist/index.js');
-  if (!existsSync(MODDLE) || !existsSync(join(root, 'dist', 'index.js'))) {
-    console.log('\u00b7 check:interop \u2014 跳过（沙箱 bpmn-moddle 或 dist 不在本机；属预期，它不是依赖）');
-  } else {
-    try {
-      run(join(root, 'tooling', 'interop.mjs'), []);
-      ok('check:interop', '互操作四向实证通过（含真实语料闭环与 Camunda 扩展保全）');
-    } catch (e) {
-      bad('check:interop', '互操作实证不通过（见上方报告）');
-      console.error((e.stdout?.toString?.() || '') + (e.stderr?.toString?.() || '') + (e.message || ''));
-    }
-  }
-}
 
 /*
- * 4.9 check:coverage-reality —— **「L2 可存」兑现率实证**。
- *     覆盖表说 48 类都承诺 L2，但数字是从表算的，不证明代码做得到。
- *     这条把每一类放进 **XSD 规定的合法容器**跑真实往返：35 类必须真进 Model JSON，
- *     13 类（编排/会话/关联族）必须至少**原样保全**，丢失即 fail。
- */
-{
-  const script = join(root, 'tooling', 'coverage-reality.mjs');
-  if (!existsSync(script) || !existsSync(join(root, 'dist', 'index.js'))) {
-    console.log('\u00b7 check:coverage-reality \u2014 跳过（脚本或 dist 不在本机）');
-  } else {
-    try {
-      run(script, []);
-      ok('check:coverage-reality', '48 类合法容器往返：35 L2 兑现 + 13 保全，零丢失');
-    } catch (e) {
-      bad('check:coverage-reality', '覆盖承诺没兑现（见上方报告）');
-      console.error((e.stdout?.toString?.() || '') + (e.stderr?.toString?.() || '') + (e.message || ''));
-    }
-  }
-}
-
-/*
- * 4.10 check:strict-import —— **真实语料 × 默认配置** 导入实证。
- *     曾经的默认 `onUnsupported:'throw'` 让 22 份 MIWG 语料 **0 份**能导入，
- *     而 211 条单测全绿毫发无损 —— 单测只喂我们自己写出来的形态。
- *     这条钉死：默认配置下每份真实语料都能进来，且导出的文件自己读得回来。
- */
-{
-  const CORPUS = join(dirname(dirname(root)), '.workbuddy/miwg');
-  if (!existsSync(CORPUS) || !existsSync(join(root, 'dist', 'index.js'))) {
-    console.log('\u00b7 check:strict-import \u2014 跳过（语料或 dist 不在本机）');
-  } else {
-    try {
-      run(join(root, 'tooling', 'strict-import.mjs'), []);
-      ok('check:strict-import', 'MIWG 语料默认配置 100% 可导入');
-    } catch (e) {
-      bad('check:strict-import', '真实语料在默认配置下用不了（见上方报告）');
-      console.error((e.stdout?.toString?.() || '') + (e.stderr?.toString?.() || '') + (e.message || ''));
-    }
-  }
-}
-
-/*
- * 4.11 check:corpus-fidelity —— **真实语料的信息守恒 + 可校验**。
- *     `strict-import` 只钉「能导入」，而实测证明**能导入也可能内容是空的**：
- *     4 份语料导入后节点全丢、2 份静默少了池与文档，门禁却报 22/22 通过。
- *     这条钉死两件事：① 往返后每类元素计数不减少；② 导入结果跑校验器零 error
- *     （曾经 22 份合法语料产出 464 条诊断、10 份含 error）。
- */
-{
-  const CORPUS = join(dirname(dirname(root)), '.workbuddy/miwg');
-  if (!existsSync(CORPUS) || !existsSync(join(root, 'dist', 'index.js'))) {
-    console.log('\u00b7 check:corpus-fidelity \u2014 跳过（语料或 dist 不在本机）');
-  } else {
-    try {
-      run(join(root, 'tooling', 'corpus-fidelity.mjs'), []);
-      ok('check:corpus-fidelity', '语料往返守恒 + 导入后零 error 诊断');
-    } catch (e) {
-      bad('check:corpus-fidelity', '真实语料信息不守恒或误报（见上方报告）');
-      console.error((e.stdout?.toString?.() || '') + (e.stderr?.toString?.() || '') + (e.message || ''));
-    }
-  }
-}
-
-/*
- * 4.12 check:interop-full —— **多库 × 双向**互操作实证。
- *     `interop`（第十道）只用了 bpmn-moddle 一个对照物，且未注册第三方扩展 ——
- *     它对 camunda:* 的验证只是「字符串有没有保回」，没验证对方是否**当真属性认**。
- *     这条扩到 5 个对照物并在**两个方向**上都跑：
- *       A 导出侧：bpmn-moddle / camunda-bpmn-moddle（Camunda 7）/ zeebe-bpmn-moddle（Camunda 8）
- *                 / bpmnlint（官方规则集，口径=不比对方自己建模的等价文件差）/ bpmn-engine（真执行）
- *       B 导入侧：moddle 建模 / moddle+camunda 建模 / MIWG 22 份（转后不得比基线差）
- *       C 闭环：ours → XML → 对方 → XML → ours → XML 幂等
- */
-{
-  const SB = join(dirname(dirname(root)), '.workbuddy/_bpmn-sandbox/node_modules/bpmn-moddle/dist/index.js');
-  if (!existsSync(SB) || !existsSync(join(root, 'dist', 'index.js'))) {
-    console.log('\u00b7 check:interop-full \u2014 跳过（沙箱对照库或 dist 不在本机）');
-  } else {
-    try {
-      run(join(root, 'tooling', 'interop-full.mjs'), []);
-      ok('check:interop-full', '多库 × 双向：5 个对照物导入导出全通');
-    } catch (e) {
-      bad('check:interop-full', '多库双向互操作失败（见上方报告）');
-      console.error((e.stdout?.toString?.() || '') + (e.stderr?.toString?.() || '') + (e.message || ''));
-    }
-  }
-}
-
-/*
- * 4.13 check:xsd —— **官方 OMG BPMN 2.0 XSD 校验**（FR-S14 的真正落地）。
+ * 4b. check:json-only —— **Q48**：本包 v2 起是 JSON-only，不再有 XML 读/写。
  *
- * 前面 14 道验的都是「别的解析器认不认」，这一道验的是 **规范本身认不认**：
- * 把文件直接喂给 OMG 发布的 BPMN20.xsd（JDK 自带 JAXP，零第三方依赖）。
- *
- * 它一上来就抓出了 14 道门禁**全都看不见**的 124 条违规（语料转一圈后），
- * 根因四类：① 规范元素塞进 `extensionElements`（XSD 那里只收 `##other` 命名空间）；
- * ② `sequenceFlow` 的 `extensionElements` 写到了 `conditionExpression` 之后；
- * ③ 一个 `BPMNDiagram` 塞了多个 `BPMNPlane`；④ 属性挂错了元素类型（`messageRef` 挂在 catchEvent 上）。
+ *     v1 时期这里有 12 道 XML 专属门禁（spec / ac-s1 / miwg / interop / coverage-reality /
+ *     strict-import / corpus-fidelity / interop-full / xsd / java-interop / canvas / graph-equiv），
+ *     它们验的全是「BPMN XML 转一圈回不回得来」。Q48 拍板彻底走 JSON-only 后：
+ *       · `src/xml/`（3127 行）与 `src/spec/`（1719 行）已删；
+ *       · `toXml` / `fromXml` 不再导出（`test/smoke.test.ts` 的 AC-M9 在源码层钉死）；
+ *     所以那 12 道全部作废删除，这里换成能对着 **dist 产物**验的两条：
+ *       A. 扫 dist：不得出现第三方 XML 库（Q38 的意图保留）与 XML 运行时迹象；
+ *       B. 运行时 import dist：`schemaVersion` 必须是 `2.0.0`，白名单 21/17/4 契约成立。
  */
 {
-  const script = join(root, 'tooling', 'xsd-check', 'run.mjs');
-  if (!existsSync(script)) {
-    console.log('\u00b7 check:xsd \u2014 跳过（脚本不在本机）');
+  if (!existsSync(dist) || !existsSync(join(dist, 'index.js'))) {
+    console.log('\u00b7 check:json-only \u2014 跳过（dist 尚未构建）');
   } else {
-    try {
-      run(script, []);
-      ok('check:xsd', '我们导出的文件 + 语料往返产物全部符合官方 BPMN 2.0 XSD');
-    } catch (e) {
-      bad('check:xsd', '导出的文件不符合官方 XSD（见上方报告）');
-      console.error((e.stdout?.toString?.() || '') + (e.stderr?.toString?.() || '') + (e.message || ''));
-    }
-  }
-}
-
-/*
- * 4.14 check:java-interop —— **Java 引擎生态**对照物（Camunda 7 `camunda-bpmn-model`）。
- *
- * `check:xsd` 验的是规范，`check:interop-full` 验的是 JS / 浏览器生态（bpmn-moddle / bpmnlint /
- * bpmn-engine）。企业里跑 BPMN 的主力其实是 Java 引擎（Camunda 7 / Flowable / Activiti 同族），
- * 它们的解析器与 JS 侧**没有任何共享代码**，是真正的独立第二意见 ——
- * 顺便跑一遍 Camunda 自带的校验器（Java 生态的 lint）。
- */
-{
-  const script = join(root, 'tooling', 'javainterop', 'run.mjs');
-  const jars = join(root, '..', '..', '.workbuddy', '_bpmn-sandbox', 'jars', 'camunda-bpmn-model-7.20.0.jar');
-  if (!existsSync(script) || !existsSync(jars)) {
-    console.log('\u00b7 check:java-interop \u2014 跳过（需要 JDK 与 Camunda jar）');
-  } else {
-    try {
-      run(script, []);
-      ok('check:java-interop', 'Camunda Java 解析器：语义按真引用/真属性读回，语料转一圈不比基线差');
-    } catch (e) {
-      bad('check:java-interop', 'Java 生态不通（见上方报告）');
-      console.error((e.stdout?.toString?.() || '') + (e.stderr?.toString?.() || '') + (e.message || ''));
-    }
-  }
-}
-
-/*
- * 4.15 check:canvas —— **画布**对照物（bpmn-visualization，mxGraph 真实渲染）。
- *
- * 前面所有对照物验的都是「解析器认不认」，而画布是**把 DI 真的画出来** ——
- * 坐标错、泳道丢了、连线走向不对，图上立刻看得见。
- * 它抓到过：autoLayout 只给节点/连线生成坐标，**泳道和池没有 shape**
- * （新建的泳道流程导出后在画布上根本没有泳道）。
- */
-{
-  const script = join(root, 'tooling', 'canvas-render.mjs');
-  const bv = join(root, '..', '..', '.workbuddy', '_bpmn-sandbox', 'node_modules', 'bpmn-visualization', 'dist', 'bpmn-visualization.esm.js');
-  if (!existsSync(script) || !existsSync(bv) || !existsSync(join(root, 'dist', 'index.js'))) {
-    console.log('\u00b7 check:canvas \u2014 跳过（沙箱缺 jsdom / bpmn-visualization 或 dist 不在本机）');
-  } else {
-    try {
-      run(script, []);
-      ok('check:canvas', '画布渲染：图元数与 kind 正确，泳道/池可见，语料转一圈后不抛错');
-    } catch (e) {
-      bad('check:canvas', '画布渲染失败（见上方报告）');
-      console.error((e.stdout?.toString?.() || '') + (e.stderr?.toString?.() || '') + (e.message || ''));
-    }
-  }
-}
-
-/*
- * 4.16 check:graph-equiv —— **跨解析器结构等价**（为什么它排在最后面）。
- *
- * 前面 15 道验的其实都是同一件事的不同切面：**能不能读回来**
- * （数量守恒、XSD 合法、画布能画、别人的解析器不抛错）。
- * 但对引擎真正致命的是另一类问题：元素一个都没少，可
- * **连线的两端对错了 / 网关默认分支丢了 / 边界事件没挂对宿主 / 坐标被删了**。
- * 这类错，数量守恒类的检查一条都抓不到。
- *
- * 所以这里把每份文件在**每一家眼里**的图抽成结构指纹，再断言：
- *   A. 语料原文件 vs 我们转一圈的产物，**同一家 parser 的指纹逐字相同**；
- *   B. 我们模型的意图 == 五家从我们导出结果里读出来的节点集与连线集。
- *
- * 已经抓到过两个真 bug（`test/di-fidelity.test.ts` 钉死）：
- *   · 只保全元素的 `BPMNShape` 被当成悬空 DI 删掉（MIWG C.5.0 丢 25 个 shape）
- *   · `ensureLayout` 往已有 layout 上追加 process plane（A.4.0 由 1 张图变 3 张）
- */
-{
-  const script = join(root, 'tooling', 'cross-parser.mjs');
-  if (!existsSync(script) || !existsSync(join(root, 'dist', 'index.js'))) {
-    console.log('\u00b7 check:graph-equiv \u2014 跳过（脚本或 dist 不在本机）');
-  } else {
-    try {
-      run(script, []);
-      ok(
-        'check:graph-equiv',
-        '跨解析器结构等价：每一家都看不出我们转过一圈，且我们模型的意图 == 五家读回的图',
+    const walkDir = (d) =>
+      readdirSync(d, { withFileTypes: true }).flatMap((e) =>
+        e.isDirectory() ? walkDir(join(d, e.name)) : [join(d, e.name)],
       );
+    const srcText = walkDir(dist)
+      .filter((f) => f.endsWith('.js'))
+      .map((f) => readFileSync(f, 'utf8'))
+      .join('\n');
+
+    // A1. 第三方 XML 库（Q38）
+    const BANNED = ['saxen', 'saxes', 'xmlbuilder2', 'fast-xml-parser', '@xmldom/xmldom', 'bpmn-moddle'];
+    const hitLib = srcText.match(new RegExp(`from\\s+'(${BANNED.join('|')})`, 'g'));
+    if (hitLib) bad('check:json-only', 'dist 中检出第三方 XML 库（Q38 违例）: ' + [...new Set(hitLib)].join(', '));
+
+    // A2. XML 运行时迹象（v2 起不该再有）
+    const TRACES = ['xmlns=', 'DOMParser', 'XMLSerializer', 'createElementNS', 'SAXParser'];
+    const hitTrace = TRACES.filter((t) => srcText.includes(t));
+    if (hitTrace.length) bad('check:json-only', 'dist 中检出 XML 运行时迹象（Q48 违例）: ' + hitTrace.join(', '));
+
+    if (!hitLib && !hitTrace.length) ok('check:json-only', 'dist 无第三方 XML 库、无 XML 运行时迹象');
+
+    // B. 运行时契约
+    try {
+      const m = await import(pathToFileURL(join(dist, 'index.js')).href);
+      const problems = [];
+      if (m.MODEL_SCHEMA_VERSION !== '2.0.0') problems.push(`MODEL_SCHEMA_VERSION=${m.MODEL_SCHEMA_VERSION}（应为 2.0.0）`);
+      if (m.NODE_TYPES?.length !== 21) problems.push(`NODE_TYPES=${m.NODE_TYPES?.length}（应为 21）`);
+      if (m.EXECUTABLE_NODE_TYPES?.length !== 17) problems.push(`EXECUTABLE_NODE_TYPES=${m.EXECUTABLE_NODE_TYPES?.length}（应为 17）`);
+      if (m.UNIMPLEMENTED_NODE_TYPES?.length !== 4) problems.push(`UNIMPLEMENTED_NODE_TYPES=${m.UNIMPLEMENTED_NODE_TYPES?.length}（应为 4）`);
+      for (const gone of ['toXml', 'fromXml'])
+        if (typeof m[gone] === 'function') problems.push(`仍导出 ${gone}()`);
+      if (problems.length) bad('check:json-only', 'dist 契约不符: ' + problems.join('；'));
+      else ok('check:json-only', 'dist 契约：schemaVersion 2.0.0、白名单 21/17/4、无 toXml/fromXml');
     } catch (e) {
-      bad('check:graph-equiv', '结构指纹前后不一致（见上方报告）');
-      console.error((e.stdout?.toString?.() || '') + (e.stderr?.toString?.() || '') + (e.message || ''));
+      bad('check:json-only', 'dist 无法加载: ' + String(e?.message ?? e));
     }
   }
 }

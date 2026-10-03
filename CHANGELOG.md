@@ -3,6 +3,52 @@
 本包遵循 [Semantic Versioning](https://semver.org/)，格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 0.x 阶段跨包依赖写 `>=x.y.z <1.0.0`（不用 `^`）。
 
+## 0.1.0 — 2026-10-03（★ 破坏性变更：JSON-only 重写）
+
+**本包不再读写 BPMN XML。** 这是 Q48 拍板的结果：v1 的形状（137 类型 / 318 属性 + 自研 SAX）
+是为「XML 互操作」服务的，而中式审批流程不需要与 Camunda/bpmn-js 交换 `.bpmn` 文件。
+删掉它换来的是**没有前缀机制、没有标量限制、没有 `processes[]` 影子层**的干净模型。
+
+⚠️ **不提供 v1 → v2 迁移**：`schemaVersion` 的 major 不为 2 时校验器直接报 error，不做静默兼容。
+
+### 破坏性变更
+
+- **删除 XML 全部能力**：`toXml` / `toXmlSync` / `fromXml` / `fromXmlSync` 及 `src/xml/`（3127 行）
+  整体删除；配套删除 `src/spec/`（BPMN 137 类型 / 318 属性覆盖表，1719 行）。
+- **删除抛出码域** `MODDLE_XML_*` / `MODDLE_PARSE_*`（共 20 个）；`MODDLE_VALIDATION_FAILED`
+  更名为 `MODDLE_MODEL_VALIDATION_FAILED`。
+- **`processes[]` 整层删除**：节点与连线上提为顶层 `nodes` / `flows`。原 `def.processes[0].nodes`
+  → `def.nodes`。（多 process 是 BPMN `collaboration` 的概念，中式审批一个定义就是一个流程。）
+- **行为字段提升为一等字段**（原住在 `extension['floken:*']` 里）：
+  `extension['floken:approval']` → **`approval`**；`extension['floken:call']` → **`call`**
+  （`{ processId, version }`）；新增 `eventDefinition` / `script`（`{ body, language }`）/ `timeout`。
+- **`extension` 取消全部限制**：键**不再需要** `prefix:` 前缀，值**不再限于**标量
+  （结构化值原样保存、原样取出）。
+- **`layout` 扁平化**：`layout.planes[].shapes/edges` → `layout.nodes` / `layout.edges` 两个字典。
+- **删除泳道 / 协作图**：`laneSets` / `participants` / `collaboration` / `messageFlow` /
+  `extraElements` / `isImmediate` 一并删除。
+- **顶层 `.strict()` 放开**：改用 `z.looseObject()`，未知键**保留但不解读**（v1 是判 error 且
+  转换层静默丢弃 —— 两边口径打架，且都违反「绝不静默丢弃」）。
+- **`XML_ID_PATTERN` / `isValidXmlId`** → `ID_PATTERN` / `isValidId`。
+- **删除依赖/工具**：`gen:spec` / `check:spec` / `ac-s1` / `miwg` / `interop` 脚本与
+  12 道 XML 专属 verify 门禁（XSD / Java 互操作 / MIWG 语料 / 画布 / 跨解析器等价）全部删除，
+  换成一道 `check:json-only`（扫 dist 无 XML 迹象 + 运行时断言 `schemaVersion 2.0.0` 与白名单 21/17/4）。
+
+### 新增
+
+- **节点类型白名单** `NODE_TYPES`（21 项 = 可执行 17 + 已知未实现 4），
+  从引擎源码能分派的类型算出，**不手列**；导出 `EXECUTABLE_NODE_TYPES` /
+  `UNIMPLEMENTED_NODE_TYPES` / `isNodeType()` / `isUnimplementedNodeType()` /
+  `NODE_TYPE_GROUPS`（设计器左侧元素面板的数据源，Q47）。
+  - 已知未实现 4 项：`sendTask` / `complexGateway` / `intermediateThrowEvent` / `implicitThrowEvent`
+    —— 建模期报 **warn**（放行），引擎令牌到达时**抛错并指名归属 FR**，绝不静默直通。
+  - 白名单**不是封闭枚举**：宿主用 `validateDefinition(def, { customNodeTypes: [...] })` 追加。
+- **`NODE_RESERVED_KEYS`**（22 个一等字段键）：① `extension` 里出现这些键 → 报
+  `MODDLE_VALIDATE_RESERVED_KEY` error；② 作为**引擎侧 ADR-009 排除判据的唯一数据源**
+  （v1 排除的是 `floken:*` 前缀，前缀机制随 XML 一起消失）。
+- 诊断码：`VALIDATE_NODE_TYPE` / `VALIDATE_NODE_UNIMPLEMENTED` / `VALIDATE_RESERVED_KEY` /
+  `VALIDATE_SCHEMA_VERSION` / `VALIDATE_UNKNOWN_OPTION`（拼错选项名不再静默忽略）。
+
 ## 0.0.4 — 2026-10-01
 
 ### 修正

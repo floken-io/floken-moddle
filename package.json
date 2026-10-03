@@ -1,7 +1,7 @@
 {
   "name": "@floken-io/moddle",
-  "version": "0.0.4",
-  "description": "BPMN 2.0 metamodel + Model JSON + JSON↔XML + validation for floken",
+  "version": "0.1.0",
+  "description": "Model JSON v2 (data model + node-type whitelist + validation + auto layout) for floken — JSON-only, no BPMN XML",
   "repository": { "type": "git", "url": "git+https://github.com/floken-io/floken-moddle.git" },
   "bugs": { "url": "https://github.com/floken-io/floken-moddle/issues" },
   "homepage": "https://github.com/floken-io/floken-moddle#readme",
@@ -37,12 +37,7 @@
     "build": "tsup",
     "postbuild": "node tooling/clean-junk.mjs",
     "test": "vitest run",
-    "gen:spec": "node scripts/gen-bpmn-spec.mjs",
-    "check:spec": "node scripts/gen-bpmn-spec.mjs --check",
     "verify": "node tooling/verify.mjs",
-    "ac-s1": "node examples/gen-sample.mjs && node tooling/ac-s1.mjs",
-    "miwg": "node tooling/fetch-miwg.mjs && node tooling/miwg.mjs",
-    "interop": "node tooling/interop.mjs",
     "changeset": "changeset",
     "release": "npm run build && npm run verify && changeset publish",
     "prepublishOnly": "npm run build && npm run verify"

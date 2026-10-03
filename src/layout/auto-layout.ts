@@ -12,12 +12,15 @@
  * 1. **一切集合先按 id 排序再遍历**，不依赖 `Map` / 对象键的偶然顺序；
  * 2. **不含随机数、不含 `Date.now()`、不含 `Math.random()`** —— 纯函数。
  *
- * 子流程：内层**先**递归量出尺寸（外层据此把盒子撑大），再按 `parentId` 写回扁平 map。
+ * 子流程：内层**先**递归量出尺寸（外层据此把盒子撑大），再直接落位成**绝对坐标**。
  * 边界事件不参与分层（它没有独立的拓扑位置，必须贴着宿主）。
+ *
+ * ★ v2 起产出**扁平字典**（`layout.nodes` / `layout.edges`），不再是 BPMN DI 的 `planes[]`
+ * —— `plane` 是「一张图一个图层」的 DI 概念，JSON-only 后没有对应需求（§4.6）。
  */
 
-import type { Flow, FlowNode, Lane, ProcessDefinition } from '../model/definition.js';
-import type { EdgeLayout, Layout, PlaneLayout, ShapeLayout } from '../model/layout.js';
+import type { Flow, FlowNode, ProcessDefinition } from '../model/definition.js';
+import type { Layout, NodeLayout, Point } from '../model/layout.js';
 
 /** 每类元素的默认几何尺寸（设计器 palette 与自动布局共用同一张表） */
 export const DEFAULT_NODE_SIZE: Readonly<Record<string, { width: number; height: number }>> =
@@ -308,182 +311,62 @@ function edgeOf(from: Box | undefined, to: Box | undefined): { x: number; y: num
 }
 
 // ─────────────────────────────────────────────────────────────────
-// 泳道 / 池的图形
-// ─────────────────────────────────────────────────────────────────
-
-/** 泳道矩形在其内容之外的留白；池再外扩一圈；池左侧标签区宽度 */
-const LANE_MARGIN = 20;
-const POOL_MARGIN = 10;
-const POOL_LABEL_WIDTH = 30;
-
-/** 一条泳道名下的**全部**节点 id（含嵌套子泳道） */
-function laneNodeIds(lane: Lane): string[] {
-  const out: string[] = [...(lane.nodeIds ?? [])];
-  for (const child of lane.lanes ?? []) out.push(...laneNodeIds(child));
-  return out;
-}
-
-/** 若干矩形的并集；全空则 undefined */
-function unionOf(boxes: (Box | undefined)[]): Box | undefined {
-  let r: Box | undefined;
-  for (const b of boxes) {
-    if (!b) continue;
-    r = r
-      ? {
-          x: Math.min(r.x, b.x),
-          y: Math.min(r.y, b.y),
-          width:
-            Math.max(r.x + r.width, b.x + b.width) - Math.min(r.x, b.x),
-          height:
-            Math.max(r.y + r.height, b.y + b.height) - Math.min(r.y, b.y),
-        }
-      : { ...b };
-  }
-  return r;
-}
-
-const unionOfBoxes = (boxes: readonly Box[]): Box | undefined => unionOf([...boxes]);
-
-function padded(box: Box | undefined, m: number): Box | undefined {
-  if (!box) return undefined;
-  return { x: box.x - m, y: box.y - m, width: box.width + 2 * m, height: box.height + 2 * m };
-}
-
-const boxToShape = (b: Box): ShapeLayout => ({
-  x: round(b.x),
-  y: round(b.y),
-  width: round(b.width),
-  height: round(b.height),
-});
-
-// ─────────────────────────────────────────────────────────────────
 // 对外 API
 // ─────────────────────────────────────────────────────────────────
 
 /**
- * 给整份定义补出 `layout`。
+ * 给整份定义补出 `layout`（§6）。
  *
- * ⚠️ **不读已有的 layout** —— 它是"从零铺一遍"的入口；
- * 要"缺哪补哪"用 {@link ensureLayout}。
+ * 三条规则（§6 表）：
+ * - **已有坐标的节点不动** —— 这是 {@link ensureLayout} 的事，本函数是"从零铺一遍"；
+ * - 分层方向**从左到右**（中式审批流的阅读习惯）；
+ * - 网关分叉对称（分支按出线数均分纵向空间 —— 由层内堆叠 + 垂直居中自然达成）。
  */
 export function autoLayout(def: ProcessDefinition): Layout {
-  if (!def || typeof def !== 'object' || !Array.isArray(def.processes)) {
+  if (!def || typeof def !== 'object' || !Array.isArray(def.nodes)) {
     throw new Error('autoLayout: definition must be a ProcessDefinition');
   }
-  const planes: PlaneLayout[] = [];
 
-  for (const proc of def.processes) {
-    const sink = new Map<string, Box>();
-    place(proc.nodes, proc.flows, LAYOUT_METRICS.originX, LAYOUT_METRICS.originY, undefined, sink);
+  const sink = new Map<string, Box>();
+  place(def.nodes, def.flows, LAYOUT_METRICS.originX, LAYOUT_METRICS.originY, undefined, sink);
 
-    const shapes: Record<string, ShapeLayout> = {};
-    for (const [id, box] of [...sink.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
-      const isSub = CONTAINER_TYPES.includes(typeOfNode(proc.nodes, id) ?? '');
-      shapes[id] = {
-        x: round(box.x),
-        y: round(box.y),
-        width: round(box.width),
-        height: round(box.height),
-        ...(box.parent ? { parentId: box.parent } : {}),
-        ...(isSub ? { isExpanded: true } : {}),
-      };
-    }
-
-    /*
-     * ★ 泳道与池的图形 —— 只给节点/连线生成坐标、不给泳道 shape 的话：
-     * 导出的泳道图在画布上**看不到泳道**（bpmn-visualization 只认得出节点，
-     * 实测「两条泳道 + 池」只识别出 2 个图元）。泳道是中国式审批的高频需求（L1 必开），
-     * 没有图形等于没兑现。
-     *
-     * 算法：泳道 = 它名下节点包围盒 + padding；池 = 所有泳道包围盒 + 左侧标签区。
-     * （真实场景多数是**导入别人的泳道图**，那时坐标来自原文件 DI；这里兜的是「新建的泳道流程」。）
-     */
-    const laneBoxes: Box[] = [];
-    for (const ls of proc.laneSets ?? []) {
-      for (const lane of ls.lanes) {
-        const box = padded(unionOf(laneNodeIds(lane).map((id) => sink.get(id))), LANE_MARGIN);
-        if (!box) continue;
-        laneBoxes.push(box);
-        shapes[lane.id] = boxToShape(box);
-      }
-    }
-    for (const collab of def.collaborations ?? []) {
-      for (const p of collab.participants) {
-        if (p.processRef !== undefined && p.processRef !== proc.id) continue;
-        const inner = unionOfBoxes(laneBoxes) ?? unionOf(proc.nodes.map((n) => sink.get(n.id)));
-        const box = padded(inner, POOL_MARGIN);
-        if (!box) continue;
-        // 池的标签在左侧：整体向左让出一条
-        shapes[p.id] = boxToShape({
-          x: box.x - POOL_LABEL_WIDTH,
-          y: box.y,
-          width: box.width + POOL_LABEL_WIDTH,
-          height: box.height,
-        });
-      }
-    }
-
-    const edges: Record<string, EdgeLayout> = {};
-    const containers = [{ nodes: proc.nodes, flows: proc.flows }, ...walkContainers(proc.nodes)];
-    for (const container of containers) {
-      for (const f of container.flows) {
-        const wps = edgeOf(sink.get(f.from), sink.get(f.to));
-        if (wps.length === 0) continue;
-        const xs = wps.map((p) => p.x);
-        const ys = wps.map((p) => p.y);
-        edges[f.id] = {
-          waypoints: wps.map((p) => ({ x: round(p.x), y: round(p.y) })),
-          ...(f.name
-            ? {
-                label: {
-                  x: round((Math.min(...xs) + Math.max(...xs)) / 2),
-                  y: round(Math.min(...ys) - 10),
-                  width: 60,
-                  height: 14,
-                },
-              }
-            : {}),
-        };
-      }
-    }
-
-    planes.push({
-      id: `${proc.id}_plane`,
-      elementId: proc.id,
-      shapes: sortRecord(shapes),
-      edges: sortRecord(edges),
-    });
+  const nodes: Record<string, NodeLayout> = {};
+  for (const [id, box] of [...sink.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    nodes[id] = { x: round(box.x), y: round(box.y), width: round(box.width), height: round(box.height) };
   }
 
-  return { planes };
+  const edges: Record<string, Point[]> = {};
+  const containers = [{ nodes: def.nodes, flows: def.flows }, ...walkContainers(def.nodes)];
+  for (const container of containers) {
+    for (const f of container.flows) {
+      const wps = edgeOf(sink.get(f.from), sink.get(f.to));
+      if (wps.length === 0) continue;
+      edges[f.id] = wps.map((p) => ({ x: round(p.x), y: round(p.y) }));
+    }
+  }
+
+  return { nodes: sortRecord(nodes), edges: sortRecord(edges) };
 }
 
 /**
- * `toXml` 的布局入口。
+ * 「缺哪补哪」的入口：已有坐标的**一个都不动**，只补缺失的（§6 规则一）。
  *
- * ★ 口径（第二十道门禁跨解析器比对改定的，理由写在下面，别改回去）：
- *
- *   **layout 一份都没有 → 全量生成**（新建模型的正常路径）
- *   **layout 已经有了 → 原样返回，一个坐标都不动**
- *
- * 旧行为是"缺哪补哪"：把 `autoLayout()` 的全量结果与已有 layout 合并
- * （`{...gen.shapes, ...cur.shapes}`），结果两个问题：
- *
- *   ① **凭空多图**：`autoLayout` 生成的 plane 以 **process** 为 `bpmnElement`，
- *      而别人的文件里 plane 往往挂在 **collaboration** 上 → 对不上就整份追加出去。
- *      MIWG A.4.0 实测：原 1 张图，转到我们手里变成 3 张（多出来的 2 张还是重复的）。
- *   ② **给作者没画的元素补框**：`dataObject` 之类作者故意不给坐标的元素会被画上去，
- *      于是每一家 parser 都看得出"这文件被人加工过"。
- *
- * 二者都直接违反 `fromXml → toXml` 的**恒等性**，而恒等性是比"每个元素都有坐标"
- * 重要得多的承诺：坐标补不出来只是某元素没有图形，恒等不成立则意味着我们在
- * 静默改写用户的排版资产。要补，请显式调用 `autoLayout()`；导出时不想补可传
- * `{ autoLayout: false }`。
+ * ⚠️ **绝不重排用户的图** —— 静默改写排版资产比"某元素没有坐标"严重得多。
+ * 要全量重铺请显式调用 {@link autoLayout}。
  */
 export function ensureLayout(def: ProcessDefinition): Layout {
   const existing = def.layout;
-  if (!existing || existing.planes.length === 0) return autoLayout(def);
-  return { planes: existing.planes };
+  const hasAny = (existing?.nodes !== undefined && Object.keys(existing.nodes).length > 0)
+    || (existing?.edges !== undefined && Object.keys(existing.edges).length > 0);
+  if (!hasAny) return autoLayout(def);
+
+  const generated = autoLayout(def);
+  const nodes: Record<string, NodeLayout> = { ...(generated.nodes ?? {}) };
+  for (const [id, box] of Object.entries(existing?.nodes ?? {})) nodes[id] = box;
+  const edges: Record<string, Point[]> = { ...(generated.edges ?? {}) };
+  for (const [id, wps] of Object.entries(existing?.edges ?? {})) edges[id] = wps;
+
+  return { nodes: sortRecord(nodes), edges: sortRecord(edges) };
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -499,18 +382,7 @@ function sortRecord<T>(rec: Record<string, T>): Record<string, T> {
   return out;
 }
 
-function typeOfNode(nodes: readonly FlowNode[], id: string): string | undefined {
-  for (const n of nodes) {
-    if (n.id === id) return n.type;
-    if (n.nodes) {
-      const inner = typeOfNode(n.nodes, id);
-      if (inner) return inner;
-    }
-  }
-  return undefined;
-}
-
-/** 递归列出所有带 flows 的容器（process 本身 + 子流程） */
+/** 递归列出所有带 flows 的容器（顶层 + 子流程） */
 function walkContainers(nodes: readonly FlowNode[]): { nodes: FlowNode[]; flows: Flow[] }[] {
   const out: { nodes: FlowNode[]; flows: Flow[] }[] = [];
   const walk = (list: readonly FlowNode[]): void => {
