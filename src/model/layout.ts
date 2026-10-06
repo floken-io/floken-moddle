@@ -70,8 +70,16 @@ export const LayoutSchema = z.looseObject({
 // ─────────────────────────────────────────────────────────────────
 
 export interface LayoutValidateOptions {
-  /** 模型里已存在的元素 id 集合；给了才查悬空引用 */
+  /** 模型里已存在的**节点** id 集合；给了才查悬空引用（用于 `layout.nodes` 的键） */
   knownIds?: ReadonlySet<string> | undefined;
+  /**
+   * ★ 模型里已存在的**连线** id 集合（用于 `layout.edges` 的键）。
+   *
+   * ⚠️ 它必须与 `knownIds` **分开**：`layout.edges` 的键是 **flow id**，
+   * 拿节点 id 集去比对会让**每一条写了坐标的边**都被误报成悬空引用 ——
+   * 也就是说 `autoLayout()` 自己产出的坐标，回填进定义后自己校验不过。
+   */
+  knownEdgeIds?: ReadonlySet<string> | undefined;
   /** 路径前缀 */
   path?: string | undefined;
 }
@@ -127,9 +135,9 @@ export function validateLayout(input: unknown, opts: LayoutValidateOptions = {})
   }
 
   for (const [id, points] of Object.entries(layout.edges ?? {})) {
-    if (opts.knownIds && !opts.knownIds.has(id)) {
+    if (opts.knownEdgeIds && !opts.knownEdgeIds.has(id)) {
       out.push(
-        diagnostic('warn', MODDLE_DIAGNOSTIC_CODES.VALIDATE_DANGLING_REF, `layout.edges['${id}'] points to an element that does not exist`, {
+        diagnostic('warn', MODDLE_DIAGNOSTIC_CODES.VALIDATE_DANGLING_REF, `layout.edges['${id}'] points to a flow that does not exist`, {
           node: { id, path: joinPath(base, 'edges', id) },
         }),
       );

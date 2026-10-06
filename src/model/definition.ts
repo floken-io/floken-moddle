@@ -475,6 +475,8 @@ export function validateDefinition(
 
   // ── ③ 引用完整性：先递归收齐 id（子流程里的节点同样是合法引用目标）──
   const nodeIds = new Set<string>();
+  /** ★ 连线 id 单独收：`layout.edges` 的键是 flow id，与 `layout.nodes` 不是同一个集合 */
+  const flowIds = new Set<string>();
   const seenNodeIds = new Set<string>();
   const seenFlowIds = new Set<string>();
 
@@ -483,7 +485,7 @@ export function validateDefinition(
       nodeIds.add(n.id);
       if (n.nodes?.length || n.flows?.length) collectIds(n.nodes ?? [], n.flows ?? []);
     }
-    for (const f of flows) void f;
+    for (const f of flows) flowIds.add(f.id);
   };
   collectIds(def.nodes, def.flows);
 
@@ -630,7 +632,7 @@ export function validateDefinition(
 
   // ── ④ layout 与节点 id 对得上 ──
   if (def.layout !== undefined) {
-    for (const d of validateLayout(def.layout, { knownIds: nodeIds })) out.push(d);
+    for (const d of validateLayout(def.layout, { knownIds: nodeIds, knownEdgeIds: flowIds })) out.push(d);
   }
 
   return out;

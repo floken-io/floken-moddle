@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ProcessDefinition } from '../src/model/definition.js';
-import { MODEL_SCHEMA_VERSION } from '../src/model/definition.js';
+import { MODEL_SCHEMA_VERSION, validateDefinition } from '../src/model/definition.js';
 import { autoLayout, ensureLayout } from '../src/layout/auto-layout.js';
 
 function model(): ProcessDefinition {
@@ -115,6 +115,47 @@ describe('autoLayout（§6）', () => {
       expect(box.x * 10).toBe(Math.round(box.x * 10));
       expect(box.y * 10).toBe(Math.round(box.y * 10));
     }
+  });
+
+  /**
+   * ★ 钉死一个真 bug（2026-10-06）：
+   * `validateLayout` 只收到**节点 id 集**，却拿它去比对 `layout.edges` 的键 ——
+   * 而 `layout.edges` 的键是 **flow id**。结果：**任何写了坐标的边都被误报成悬空引用**，
+   * 也就是说 `autoLayout()` 自己产出的坐标，回填进定义后**自己校验不过**。
+   *
+   * 修法：`validateLayout` 新增 `knownEdgeIds`（与 `knownIds` 分开），
+   * `validateDefinition` 递归收齐 flow id 后传入。
+   */
+  it('★ autoLayout 产出的坐标回填进定义后，校验零诊断（自己生成的自己能过）', () => {
+    const def = model();
+    const withLayout: ProcessDefinition = { ...def, layout: autoLayout(def) };
+
+    // 先确认回填的确实有边坐标（否则这条测试会变成空转）
+    expect(Object.keys(withLayout.layout?.edges ?? {}).length).toBeGreaterThan(0);
+
+    const diags = validateDefinition(withLayout);
+    expect(diags).toEqual([]);
+  });
+
+  it('★ layout.edges 指向不存在的 flow → warn；指向真实 flow → 不报（含子流程内的边）', () => {
+    const def = model();
+    // 'F1' 是顶层连线，'IF' 是 subProcess **内嵌**的连线 —— 两者都必须是合法引用目标
+    const good = validateDefinition({
+      ...def,
+      layout: {
+        edges: {
+          F1: [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+          IF: [{ x: 0, y: 0 }, { x: 1, y: 1 }],
+        },
+      },
+    });
+    expect(good).toEqual([]);
+
+    const bad = validateDefinition({
+      ...def,
+      layout: { edges: { Flow_nope: [{ x: 0, y: 0 }, { x: 1, y: 1 }] } },
+    });
+    expect(bad.filter((d) => d.code === 'MODDLE_VALIDATE_DANGLING_REF')).toHaveLength(1);
   });
 });
 
