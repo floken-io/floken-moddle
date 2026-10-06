@@ -113,12 +113,6 @@ export const MODDLE_DIAGNOSTIC_CODES = {
    */
   VALIDATE_NODE_UNIMPLEMENTED: 'MODDLE_VALIDATE_NODE_UNIMPLEMENTED',
   /**
-   * ★ v2：`extension` 袋里出现了模型的一等字段键（见 `NODE_RESERVED_KEYS`）。
-   *
-   * **error**：一等字段与袋里那份「哪个生效」会变成未定义行为（§4.5 硬边界）。
-   */
-  VALIDATE_RESERVED_KEY: 'MODDLE_VALIDATE_RESERVED_KEY',
-  /**
    * ★ v2：`schemaVersion` 的 major 不是本包认识的版本。
    *
    * **error 且不做迁移**：「读旧格式读出一个行为不同的流程」比「当场报错」危险得多。

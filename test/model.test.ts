@@ -12,7 +12,6 @@ import {
   EXECUTABLE_NODE_TYPES,
   MODEL_SCHEMA_VERSION,
   ModdleValidationError,
-  NODE_RESERVED_KEYS,
   NODE_TYPES,
   NODE_TYPE_GROUPS,
   UNIMPLEMENTED_NODE_TYPES,
@@ -198,16 +197,22 @@ describe('自定义扩展（§4.5 · AC-M4 / AC-M5）', () => {
     expect(node['acmeWhatever']).toEqual({ x: 1 });
   });
 
-  it('★ 保留键不许塞进 extension（§4.5 硬边界）', () => {
+  it('★ extension 里**什么键都能写** —— 与一等字段同名也零诊断（§4.5）', () => {
+    /*
+     * ★ 用户 2026-10-06 拍板：「自定义扩展键中出现什么都不奇怪吧，这是用户自己的，
+     * 他想干嘛都行」；且不保留任何提醒（连 warn 也不要）。
+     *
+     * `extension` 是宿主的地盘，引擎承诺**不解读、不改写、不筛选**，
+     * 那么模型层对键名就**没有任何话语权** —— 连"提醒"都没有。
+     * 一等的 `approval` 在 `node.approval`，袋里的 `approval` 是宿主自己的数据，
+     * 两者路径不同、根本不是一回事，模型层不该替宿主判断"你是不是写错了"。
+     */
     const def = minimal();
-    def.nodes[1] = { ...def.nodes[1]!, extension: { approval: { approvers: [] } } };
-    expect(codesOf(def)).toContain('error:MODDLE_VALIDATE_RESERVED_KEY');
-  });
-
-  it('NODE_RESERVED_KEYS 覆盖全部一等字段（引擎侧 ADR-009 排除判据的数据源）', () => {
-    for (const k of ['id', 'type', 'approval', 'call', 'eventDefinition', 'timeout']) {
-      expect(NODE_RESERVED_KEYS).toContain(k);
-    }
+    def.nodes[1] = {
+      ...def.nodes[1]!,
+      extension: { approval: { approvers: [] }, call: 1, name: '客户备注', id: 'X-1', type: 'vip' },
+    };
+    expect(codesOf(def)).toEqual([]);
   });
 });
 

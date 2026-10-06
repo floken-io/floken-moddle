@@ -75,40 +75,6 @@ export type ExtensionBag = Record<string, unknown>;
 
 const ExtensionBagSchema: z.ZodType<ExtensionBag> = z.record(z.string(), z.unknown());
 
-/**
- * ★ 模型的一等字段键（§4.5「保留键不进袋」）。
- *
- * `extension` 里**不允许**再出现这些键：它们已经是一等字段，重复塞一份会让
- * 「哪个生效」变成未定义行为。
- *
- * ★ 这条同时是**引擎侧 ADR-009 排除判据的数据源**：v1 排除的是 `floken:*` 前缀，
- * 而**前缀机制随 XML 一起消失**，故改为排除保留键（见 §4.5 衔接表）。
- */
-export const NODE_RESERVED_KEYS: readonly string[] = Object.freeze([
-  'id',
-  'type',
-  'name',
-  'description',
-  'approval',
-  'call',
-  'eventDefinition',
-  'script',
-  'timeout',
-  'formKey',
-  'attachedTo',
-  'defaultFlow',
-  'implementation',
-  'operationRef',
-  'messageRef',
-  'calledElement',
-  'triggeredByEvent',
-  'cancelActivity',
-  'isInterrupting',
-  'nodes',
-  'flows',
-  'extension',
-]);
-
 // ─────────────────────────────────────────────────────────────────
 // 行为子结构
 // ─────────────────────────────────────────────────────────────────
@@ -489,27 +455,7 @@ export function validateDefinition(
   };
   collectIds(def.nodes, def.flows);
 
-  /** ④ 扩展袋：保留键不许重复塞进来（§4.5「保留键不进袋」） */
-  const checkExtension = (ext: ExtensionBag | undefined, base: string): void => {
-    if (!ext) return;
-    for (const k of Object.keys(ext)) {
-      if (NODE_RESERVED_KEYS.includes(k)) {
-        out.push(
-          diagnostic(
-            'error',
-            MODDLE_DIAGNOSTIC_CODES.VALIDATE_RESERVED_KEY,
-            `'${k}' is a reserved model key and must not appear inside 'extension'`,
-            {
-              node: { path: joinPath(base, 'extension', k) },
-              suggestions: [`把它写成该元素的一等字段 ${k}`],
-            },
-          ),
-        );
-      }
-    }
-  };
-
-  /** ② + ④ 的节点级检查 */
+  /** ② 的节点级检查 */
   const checkNode = (node: FlowNode, nBase: string): void => {
     checkId(node.id, joinPath(nBase, 'id'));
     if (seenNodeIds.has(node.id)) {
@@ -577,8 +523,6 @@ export function validateDefinition(
         });
       }
     }
-
-    checkExtension(node.extension, nBase);
   };
 
   const walk = (nodes: readonly FlowNode[], flows: readonly Flow[], base: string): void => {
@@ -624,7 +568,6 @@ export function validateDefinition(
           ),
         );
       }
-      checkExtension(flow.extension, fBase);
     }
   };
 

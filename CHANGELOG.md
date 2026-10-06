@@ -3,6 +3,21 @@
 本包遵循 [Semantic Versioning](https://semver.org/)，格式参考 [Keep a Changelog](https://keepachangelog.com/)。
 0.x 阶段跨包依赖写 `>=x.y.z <1.0.0`（不用 `^`）。
 
+## 未发布
+
+### 破坏性变更 · `extension` 键名完全自由（不再有任何校验）
+
+删除「保留键不进袋」这条规则 —— 包括它降级成 warn 的版本。同时删除：
+
+- `NODE_RESERVED_KEYS` 常量（曾作为引擎侧 ADR-009 排除判据的数据源，该判据已一并删除）
+- `MODDLE_VALIDATE_RESERVED_KEY` 诊断码（不再产生 = 直接删，不留死码，AGENTS.md §0.1）
+
+理由：一等字段在 `node.approval`，**不在** `node.extension` 里，两者路径不同、不是一回事。
+`extension.approval` 是**宿主自己的业务数据**（比如"客户的审批意见"），
+模型层不该替宿主判断"你是不是写错了"—— 那既不是 error 该管的事，也不是 warn 该管的事。
+
+现在 `extension` 里**什么键都能写**，零诊断。
+
 ## 0.1.0 — 2026-10-03（★ 破坏性变更：JSON-only 重写）
 
 **本包不再读写 BPMN XML。** 这是 Q48 拍板的结果：v1 的形状（137 类型 / 318 属性 + 自研 SAX）
