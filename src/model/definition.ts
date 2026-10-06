@@ -389,7 +389,7 @@ export interface ValidateDefinitionOptions {
   /**
    * 追加自定义节点类型（§3.3）。
    *
-   * 白名单**不是封闭枚举**：宿主可以加自己的类型（如 `acme:robotTask`），
+   * 白名单**不是封闭枚举**：宿主可以加自己的类型（如 `robotTask`），
    * 但必须**显式声明** —— 拼错 `userTaks` 若被静默接受，引擎要等令牌到达才报错。
    */
   customNodeTypes?: readonly string[] | undefined;

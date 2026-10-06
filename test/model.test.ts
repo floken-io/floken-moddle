@@ -124,9 +124,9 @@ describe('节点类型白名单（§3 · AC-M1 / AC-M2）', () => {
 
   it('customNodeTypes 内的类型通过校验；不在里头的照样 error（AC-M3）', () => {
     const def = minimal();
-    def.nodes[1] = { id: 't1', type: 'acme:robotTask', name: '机器人' };
+    def.nodes[1] = { id: 't1', type: 'robotTask', name: '机器人' };
     expect(errorsOf(def).length).toBeGreaterThan(0);
-    expect(validateDefinition(def, { customNodeTypes: ['acme:robotTask'] }).filter((d) => d.severity === 'error')).toEqual([]);
+    expect(validateDefinition(def, { customNodeTypes: ['robotTask'] }).filter((d) => d.severity === 'error')).toEqual([]);
   });
 
   it('★ 未知类型要给全量合法取值（§5.4：期望类诊断必须带 expected）', () => {
