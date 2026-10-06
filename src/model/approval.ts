@@ -119,13 +119,20 @@ export const REQUIRE_COMMENT_DEFAULTS = Object.freeze({
 // ③ 时间层
 // ─────────────────────────────────────────────────────────────────
 
+/**
+ * ★ 工作日历 —— 决定「3 个工作日」怎么数。
+ *
+ * ⚠️ 本包只负责**把它原样带到调度方**：`workdays` / `hours` 是默认工作时段，
+ * **`holidays` 一律由宿主提供** —— 引擎与模型层**都不内置任何法定节假日表**
+ * （每家公司的放假安排不同，内置一份就是在替业务做决定，且必然过期）。
+ */
 export interface WorkCalendarSpec {
   id?: string | undefined;
   /** 默认 [1,2,3,4,5] */
   workdays?: number[] | undefined;
   /** 默认 [{ from: '09:00', to: '18:00' }]（F-1 AC1） */
   hours?: { from: string; to: string }[] | undefined;
-  /** 'YYYY-MM-DD'；缺省用内置法定节假日（F-1 AC3） */
+  /** 'YYYY-MM-DD'；**缺省 = 不跳过任何节假日**（F-1 AC3 口径订正：无内置表） */
   holidays?: string[] | undefined;
 }
 
@@ -142,18 +149,30 @@ export interface TimeoutConfig {
   date?: string | undefined;
   /** 周期（F-2 AC3） */
   cycle?: string | undefined;
-  /** 默认 'cn-default' */
+  /**
+   * 工作日历，**两种形态都原样交给调度方**（引擎不解读）：
+   *   ① 字符串 = 日历 **id**（`'cn-default'` 只是个名字，含义由调度方解释）；
+   *   ② 内联对象 = 自己定义（`workdays` / `hours` / `holidays`）。
+   * 默认 `'cn-default'`。
+   */
   workCalendar?: string | WorkCalendarSpec | undefined;
   /** 至少一个 */
   actions: TimeoutAction[];
 }
 
 /**
- * ⚠️ `workCalendar` 默认**不是 7×24**：「3 个工作日」必须跳过周末与法定节假日。
+ * ⚠️ `workCalendar` 默认**不是 7×24**：「3 个工作日」必须跳过周末。
  * 不配日历时也不得退化成 7×24 —— 这是中国式审批的硬预期（F-1）。
+ *
+ * ⚠️ 但**法定节假日不内置**：`cn-default` 只代表「周一至周五 9:00–18:00」这一默认工作时段，
+ * 放假安排由宿主往 `holidays` 里给（见 {@link WorkCalendarSpec}）。
  */
 export const DEFAULT_WORK_CALENDAR = 'cn-default';
 
+/**
+ * 归一化时填进去的默认值 —— **只含工作时段，不含节假日**。
+ * 早期注释写「缺省用内置法定节假日」，但表里一直是空的：那是文档承诺没兑现，已订正口径。
+ */
 export const DEFAULT_WORK_CALENDAR_SPEC: Readonly<{
   id: string;
   workdays: number[];
