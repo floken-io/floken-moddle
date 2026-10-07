@@ -227,6 +227,18 @@ export interface Approval {
   commentRequired?: 'never' | 'onReject' | 'always' | undefined;
 
   // ── 合规层 ──
+  /**
+   * 抄送 / 知会（**不改流转、不建待办**，仅知会相关人）。
+   *
+   * ⚠️ **D-92：内核当前完全不读这个配置**（`@floken-io/engine` 里没有一处引用 `cc`）。
+   *   `to` 用**同一个 `ApproverSpec`** 描述「抄送给谁」（指定到人 = `{type:'user', value:'<宿主系统的用户 id>'}`，
+   *   `value` 只是透传字符串 —— 引擎不认识它、不校验它是否存在）；
+   *   **解析与发送全由宿主做**：在 `EventSink` / `hooks.afterAction` 里读本配置 →
+   *   自己调 `ApproverSource.resolve()` → 自己发通知。
+   *
+   * ⚠️ `on` 的 `approved` / `rejected` 在引擎 10 个事件名里**没有对应项**，
+   *   宿主只能从 `hooks.afterAction` 的 `ctx.action.name`（`approve` / `reject`）自行判定。
+   */
   cc?:
     | { to?: ApproverSpec[] | undefined; on?: CcTrigger[] | undefined }
     | undefined;
