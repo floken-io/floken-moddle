@@ -151,9 +151,9 @@ export interface TimeoutConfig {
   cycle?: string | undefined;
   /**
    * 工作日历，**两种形态都原样交给调度方**（引擎不解读）：
-   *   ① 字符串 = 日历 **id**（`'cn-default'` 只是个名字，含义由调度方解释）；
+   *   ① 字符串 = 日历 **id**（`'default'` 只是个名字，含义由调度方解释）；
    *   ② 内联对象 = 自己定义（`workdays` / `hours` / `holidays`）。
-   * 默认 `'cn-default'`。
+   * 默认 `'default'`。
    */
   workCalendar?: string | WorkCalendarSpec | undefined;
   /** 至少一个 */
@@ -164,10 +164,14 @@ export interface TimeoutConfig {
  * ⚠️ `workCalendar` 默认**不是 7×24**：「3 个工作日」必须跳过周末。
  * 不配日历时也不得退化成 7×24 —— 这是中国式审批的硬预期（F-1）。
  *
- * ⚠️ 但**法定节假日不内置**：`cn-default` 只代表「周一至周五 9:00–18:00」这一默认工作时段，
+ * ⚠️ 但**法定节假日不内置**：`'default'` 只代表「周一至周五 9:00–18:00」这一默认工作时段，
  * 放假安排由宿主往 `holidays` 里给（见 {@link WorkCalendarSpec}）。
+ *
+ * ⚠️ 为什么 id 叫 `'default'` 而不是 `'cn-default'`（2026-10-07 改名）：
+ * 它**不含任何中国法定节假日**，只是"默认工作时段"。叫 `cn-default` 会让人以为
+ * 春节国庆都已经算好了 —— 名字承诺了兑现不了的东西。
  */
-export const DEFAULT_WORK_CALENDAR = 'cn-default';
+export const DEFAULT_WORK_CALENDAR = 'default';
 
 /**
  * 归一化时填进去的默认值 —— **只含工作时段，不含节假日**。
