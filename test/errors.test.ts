@@ -86,15 +86,12 @@ describe('诊断形状（AGENTS.md §5.4 / §5.5）', () => {
     expect(() => diagnostic('error', 'MODDLE_VALIDATE_TYPE', 'x')).toThrow(ModdleArgError);
   });
 
-  it('模型定位与源码定位都能带', () => {
+  it('模型定位（node 路径）能带，且为唯一定位手段', () => {
     const a = diagnostic('error', 'MODDLE_VALIDATE_TYPE', 'x', { node: { id: 'n1', path: 'a.b' } });
     expect(a.node).toEqual({ id: 'n1', path: 'a.b' });
-    expect(a.start).toBeUndefined();
 
-    const b = diagnostic('warn', 'MODDLE_VALIDATE_TYPE', 'y', { start: 12, end: 20 });
-    expect(b.start).toBe(12);
-    expect(b.end).toBe(20);
-    expect(b.node).toBeUndefined();
+    // JSON-only：不再有「源码偏移」定位（旧 `start`/`end` 随 XML 一起删除）
+    expect(() => diagnostic('warn', 'MODDLE_VALIDATE_TYPE', 'y', {})).toThrow(ModdleArgError);
   });
 
   it('期望类诊断要给出合法取值（§5.4）', () => {
