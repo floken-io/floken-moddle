@@ -229,6 +229,51 @@ describe('timeout 三选一、互斥', () => {
   });
 });
 
+describe('★ timeout 的 duration / date / cycle 格式校验', () => {
+  const at = (timeout: Record<string, unknown>) =>
+    codesOf({ approvers: [{ type: 'user', value: 'u1' }], timeout });
+  const ok = (timeout: Record<string, unknown>) => expect(at(timeout)).not.toContain('error:MODDLE_VALIDATE_TIMEOUT_FORMAT');
+
+  it('合法 duration 全过：P3D / PT4H / P1Y2M3DT4H30M / PT0.5S', () => {
+    for (const duration of ['P3D', 'PT4H', 'P1Y2M3DT4H30M', 'PT0.5S', 'P1W']) {
+      ok({ duration, actions: [{ type: 'autoApprove' }] });
+    }
+  });
+
+  it('★ 拼错的 duration 不再静默放行（结构层只认"非空字符串"）', () => {
+    for (const duration of ['3d', '三天', '3 days', 'D3P', 'P3', 'PT', 'P']) {
+      expect(at({ duration, actions: [{ type: 'autoApprove' }] })).toContain(
+        'error:MODDLE_VALIDATE_TIMEOUT_FORMAT',
+      );
+    }
+  });
+
+  it('合法 date 过；不存在的一天（2026-02-30）不过', () => {
+    ok({ date: '2026-10-10T18:00:00', actions: [{ type: 'autoApprove' }] });
+    ok({ date: '2026-10-10', actions: [{ type: 'autoApprove' }] });
+    ok({ date: '2026-10-10T18:00:00+08:00', actions: [{ type: 'autoApprove' }] });
+    for (const date of ['2026-02-30', '2026-13-01', '明天下午', '2026/10/10']) {
+      expect(at({ date, actions: [{ type: 'autoApprove' }] })).toContain(
+        'error:MODDLE_VALIDATE_TIMEOUT_FORMAT',
+      );
+    }
+  });
+
+  it('合法 cycle 过：R3/PT4H / R/PT1H（无限）/ R3/2026-10-01T00:00/PT1H', () => {
+    for (const cycle of ['R3/PT4H', 'R/PT1H', 'R3/2026-10-01T00:00/PT1H']) {
+      ok({ cycle, actions: [{ type: 'remind' }] });
+    }
+  });
+
+  it('非法 cycle 挡住：PT4H（缺 R 段）/ R3 / R3/瞎写', () => {
+    for (const cycle of ['PT4H', 'R3', 'R3/瞎写', '3/PT4H', 'R3/PT4H/PT1H/PT2H']) {
+      expect(at({ cycle, actions: [{ type: 'remind' }] })).toContain(
+        'error:MODDLE_VALIDATE_TIMEOUT_FORMAT',
+      );
+    }
+  });
+});
+
 describe('其他规则', () => {
   it('approvers 为空 → VALIDATE_APPROVER_REQUIRED', () => {
     expect(codesOf({ approvers: [] })).toContain('error:MODDLE_VALIDATE_APPROVER_REQUIRED');

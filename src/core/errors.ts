@@ -94,6 +94,14 @@ export const MODDLE_DIAGNOSTIC_CODES = {
   VALIDATE_TIMEOUT_EXCLUSIVE: 'MODDLE_VALIDATE_TIMEOUT_EXCLUSIVE',
   /** 规则层：`timeout.actions` 一个都没有 */
   VALIDATE_TIMEOUT_ACTION_REQUIRED: 'MODDLE_VALIDATE_TIMEOUT_ACTION_REQUIRED',
+  /**
+   * 规则层★：`duration` / `date` / `cycle` 的**格式**不是 ISO-8601。
+   *
+   * ⚠️ 为什么结构层不校验：zod 只能说「是个非空字符串」，`'三天'` / `'3d'` 照样过，
+   * 然后一路原样送到调度方 —— 错要在**运行时**才炸（或更糟：静默不生效）。
+   * 定义层能挡就挡，这是它存在的意义（错在建模期暴露，成本差一个量级）。
+   */
+  VALIDATE_TIMEOUT_FORMAT: 'MODDLE_VALIDATE_TIMEOUT_FORMAT',
   /** 规则层：模型内部引用悬空（flow.from/to、layout 指向不存在的元素） */
   VALIDATE_DANGLING_REF: 'MODDLE_VALIDATE_DANGLING_REF',
   /** 规则层：id 重复 */

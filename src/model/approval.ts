@@ -448,6 +448,87 @@ export function checkPolicyMode(
   return { level: 'ok', reason: '' };
 }
 
+/**
+ * ISO-8601 **格式**校验（规则层）。
+ *
+ * ⚠️ 为什么必须有这一层：结构层只能说「是个非空字符串」，`'三天'` / `'3d'` 照样通过，
+ * 然后**原样**送到调度方 —— 错要在运行时才暴露（或更糟：静默不生效）。
+ * 定义层能挡就该挡，错在建模期暴露的成本比运行时低一个量级。
+ *
+ * ⚠️ 为什么不用库：只需判断"是不是 ISO-8601 写法"，不涉及时区换算与历法，
+ * 引一个时态库进来会直接违反 Q36（主包每层 deps ≤ 1）。
+ */
+const ISO_DURATION =
+  /^P(?!$)(?:\d+(?:[.,]\d+)?Y)?(?:\d+(?:[.,]\d+)?M)?(?:\d+(?:[.,]\d+)?W)?(?:\d+(?:[.,]\d+)?D)?(?:T(?!$)(?:\d+(?:[.,]\d+)?H)?(?:\d+(?:[.,]\d+)?M)?(?:\d+(?:[.,]\d+)?S)?)?$/;
+
+const ISO_DATE_TIME =
+  /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+
+function isIsoDuration(s: string): boolean {
+  return ISO_DURATION.test(s);
+}
+
+function isIsoDateTime(s: string): boolean {
+  const m = ISO_DATE_TIME.exec(s);
+  if (m === null) return false;
+
+  /*
+   * ⚠️ 正则挡不住「形状对、日子不存在」的（`2026-02-30` / `2026-13-01`）。
+   * ⚠️ 也不能靠 `Date.parse()` 兜底 —— 实测 V8 对**纯日期**形式很宽松：
+   *   `Date.parse('2026-02-30')` 返回 2026-03-02 的时间戳（不是 NaN），
+   *   只有带时间部分的 ISO 串才会严格到返回 NaN。故这里自己回读比对。
+   */
+  const y = Number(s.slice(0, 4));
+  const mo = Number(s.slice(5, 7));
+  const d = Number(s.slice(8, 10));
+  const probe = new Date(Date.UTC(y, mo - 1, d));
+  if (
+    probe.getUTCFullYear() !== y ||
+    probe.getUTCMonth() !== mo - 1 ||
+    probe.getUTCDate() !== d
+  ) {
+    return false;
+  }
+  if (s.length <= 10) return true;
+
+  const hh = Number(s.slice(11, 13));
+  const mm = Number(s.slice(14, 16));
+  if (hh > 23 || mm > 59) return false;
+  if (s.length > 16) {
+    const sec = Number(s.slice(17, 19));
+    if (sec > 60) return false; // 60 = 闰秒，ISO-8601 允许
+  }
+  return true;
+}
+
+/**
+ * ISO-8601 重复间隔：`R[n]/<interval>`，或 `R[n]/<start>/<interval>`、`R[n]/<interval>/<end>`。
+ * ⚠️ `R` 后不写次数 = 无限重复（ISO 允许的写法），故是 `\d*` 不是 `\d+`。
+ */
+function isIsoCycle(s: string): boolean {
+  const parts = s.split('/');
+  if (parts.length < 2 || parts.length > 3) return false;
+  const head = parts[0];
+  if (head === undefined || !/^R\d*$/.test(head)) return false;
+  return parts
+    .slice(1)
+    .every((p) => p !== undefined && (isIsoDuration(p) || isIsoDateTime(p)));
+}
+
+/** `timeout` 的那个"时间写法"是否合法（返回不合法的理由，`undefined` = 合法） */
+function timeoutFormatError(key: string, raw: string): string | undefined {
+  if (key === 'duration' && !isIsoDuration(raw)) {
+    return `\`timeout.duration\` 不是 ISO-8601 时长：'${raw}'（例：'P3D' / 'PT4H'）`;
+  }
+  if (key === 'date' && !isIsoDateTime(raw)) {
+    return `\`timeout.date\` 不是 ISO-8601 日期时间：'${raw}'（例：'2026-10-10T18:00:00'）`;
+  }
+  if (key === 'cycle' && !isIsoCycle(raw)) {
+    return `\`timeout.cycle\` 不是 ISO-8601 重复间隔：'${raw}'（例：'R3/PT4H'）`;
+  }
+  return undefined;
+}
+
 export interface ValidateOptions {
   /** 模型定位：节点 id */
   nodeId?: string | undefined;
@@ -597,6 +678,21 @@ export function validateApproval(input: unknown, opts: ValidateOptions = {}): Di
           '`timeout` 必须给出 duration / date / cycle 之一',
           { node: at('timeout'), expected: ['duration', 'date', 'cycle'] }),
       );
+    } else {
+      /* ★ 只有一个 → 再验**格式**（结构层只能保证它是非空字符串） */
+      const key = given[0];
+      const raw = key === undefined ? undefined : asString(timeout[key]);
+      if (key !== undefined && raw !== undefined) {
+        const why = timeoutFormatError(key, raw);
+        if (why !== undefined) {
+          out.push(
+            diagnostic('error', MODDLE_DIAGNOSTIC_CODES.VALIDATE_TIMEOUT_FORMAT, why, {
+              node: at(`timeout.${key}`),
+              expected: ['P3D / PT4H', '2026-10-10T18:00:00', 'R3/PT4H'],
+            }),
+          );
+        }
+      }
     }
     const actions = asArray(timeout['actions']);
     if (actions === undefined || actions.length === 0) {
