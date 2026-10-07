@@ -89,7 +89,13 @@ const ExtensionBagSchema: z.ZodType<ExtensionBag> = z.record(z.string(), z.unkno
 export interface FormalExpression {
   /** ★ FEEL 源码，**不带 `=` 前缀**（D19） */
   body: string;
-  /** 默认 {@link FEEL_EXPRESSION_LANGUAGE} */
+  /**
+   * 默认 {@link FEEL_EXPRESSION_LANGUAGE}。
+   *
+   * ⚠️ **引擎只会 FEEL**：写了别的语言 → 建图即抛 `OPTION_INVALID`（指名不支持该语言），
+   * **不静默当 FEEL 求值**（曾经完全不读这个字段，实测 `language:'javascript'` 报的是
+   * 「FEEL 语法错」，把「不支持」伪装成「你写错了」）。
+   */
   language?: string | undefined;
 }
 
@@ -125,7 +131,13 @@ export interface CallSpec {
 export interface ScriptSpec {
   /** 脚本源码 */
   body: string;
-  /** 语言/格式标识（如 `feel` / `javascript`） */
+  /**
+   * 语言/格式标识，**不写 = FEEL**。
+   *
+   * ⚠️ 写 `javascript` **不代表引擎会执行 JS** —— 引擎没有任何动态执行能力（无 `eval` 类 API）：
+   * 非 FEEL 的脚本一律改查宿主的 `handlers` 表，**且 `body` 根本不传给 handler**
+   * （`fn(variables, ctx)` 里没有源码）。那段源码对引擎来说是**死内容**，宿主自己写实现。
+   */
   language?: string | undefined;
 }
 

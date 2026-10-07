@@ -5,6 +5,15 @@
 
 ## 未发布
 
+### 注释订正 · `script.language` 与 `condition.language` 的真实口径
+
+只改注释与文档，行为未变：
+
+- `ScriptSpec.language` 写 `javascript` **不代表引擎会执行 JS** —— 引擎无动态执行能力，
+  非 FEEL 一律改查宿主的 `handlers` 表，**且 `body` 根本不传给 handler**（源码是死内容）。
+- `FormalExpression.language` 写了非 FEEL 的语言，引擎**建图即抛**（`@floken-io/engine` 侧），
+  不静默当 FEEL 求值。不写 = FEEL。
+
 ### 新增 · `timeout` 的 `duration` / `date` / `cycle` 校验**格式**（不只是"非空字符串"）
 
 新增诊断码 `MODDLE_VALIDATE_TIMEOUT_FORMAT`。此前这三个字段只过 `z.string().min(1)`，
